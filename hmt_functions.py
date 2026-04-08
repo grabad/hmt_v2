@@ -6,13 +6,25 @@ import napari
 from sklearn.cluster import DBSCAN
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.spatial import ConvexHull
 
-def filter_quantile(df, percent=0.05, column="z [nm]"):
+def filter_quantile(df, column, percent=0.05):
+    """
+    Filter dataframe based by removing the top and bottom percent (default 0.05, leaving the 5th-95th percentile of the data)
+    """
     lower_bound = df[column].quantile(percent)
     upper_bound = df[column].quantile(1 - percent)
     
     filtered_df = df[(df[column] >= lower_bound) & (df[column] <= upper_bound)]
     
+    return filtered_df
+
+def filter_axial(df, padding=5):
+    lower_bound = df["z [nm]"].min() + padding
+    upper_bound = df["z [nm]"].max() - padding
+
+    filtered_df = df[(df["z [nm]"] > lower_bound) & (df["z [nm]"] < upper_bound)]
+
     return filtered_df
 
 
@@ -58,7 +70,8 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
         border_color=ac_border, 
         border_width=0.01, 
         size=ac_noise["plot_size"],    
-        name="H3K27ac Noise"
+        name="H3K27ac Noise",
+        out_of_slice_display=True
     )           
     viewer.add_points(
         data=me3_noise[coords],
@@ -67,7 +80,8 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
         border_color=me3_border, 
         border_width=0.01, 
         size=me3_noise["plot_size"],   
-        name="H3K27me3 Noise"
+        name="H3K27me3 Noise",
+        out_of_slice_display=True
     )                     
     viewer.add_points(
         data=ac_nano[coords],
@@ -76,7 +90,8 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
         border_color=ac_border, 
         border_width=0.01, 
         size=ac_nano["plot_size"],    
-        name="H3K27ac Nanodomains"
+        name="H3K27ac Nanodomains",
+        out_of_slice_display=True
     )           
     viewer.add_points(
         data=me3_nano[coords],
@@ -85,8 +100,13 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
         border_color=me3_border, 
         border_width=0.01, 
         size=me3_nano["plot_size"],   
-        name="H3K27me3 Nanodomains"
-)
+        name="H3K27me3 Nanodomains",
+        out_of_slice_display=True
+    )
+
+    viewer.dims.order = (2, 1, 0)
+    viewer.dims.ndisplay = 3
+    
 
 def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1, show_plots=False):
     comb_df = pd.concat([me3_df, ac_df])
@@ -160,3 +180,22 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
         plt.show()
 
     return binary_mask, me3_masked, ac_masked
+
+def calc_area(locs):
+    """
+    Calculate the 2D area of a point cloud projected on the XY plane using its Convex Hull.
+    """
+    points = locs[["x [nm]", "y [nm]"]].values
+    
+    # A 2D convex hull requires at least 3 non-collinear points
+    if len(points) < 3:
+        return 0.0
+        
+    try:
+        hull = ConvexHull(points)
+        # Note: For a 2D ConvexHull in SciPy, .volume returns the area and .area returns the perimeter
+        return hull.volume
+    except Exception:
+        # Handles errors if points are completely collinear/flat
+        return 0.0
+     
