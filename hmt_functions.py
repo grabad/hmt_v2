@@ -227,7 +227,11 @@ def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
         
         # Only assign bands to pixels inside the mask
         inside_mask = binary_mask > 0
+        outside_mask = binary_mask <= 0
+        
         contour_bands[inside_mask] = np.clip(np.digitize(distance_map[inside_mask], bins), 1, num_bands)
+        contour_bands[inside_mask] = 100 - contour_bands[inside_mask]
+        contour_bands[outside_mask] = contour_bands[outside_mask] - 1
         
     if show_plots:
         fig, axes = plt.subplots(1, 2, figsize=(10, 5))
@@ -238,7 +242,9 @@ def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
         axes[0].set_yticks([])
         fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
         
-        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap='tab20')
+        cmap = plt.get_cmap('tab20_r').copy()
+        cmap.set_under('white')
+        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap=cmap, vmax=num_bands, vmin=0)
         axes[1].set_title(f'Radial Contours ({num_bands} Bands)')
         axes[1].set_xticks([])
         axes[1].set_yticks([])
@@ -248,3 +254,15 @@ def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
         plt.show()
         
     return distance_map, contour_bands
+
+
+"""
+TODO: 
+
+SNCR Function (KD Tree most likely)
+Localization size calculation
+Localization Density (area based and volume based)
+Density Correction
+Ripley's K implementation
+Final outputs
+"""
