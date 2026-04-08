@@ -4,13 +4,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import napari
 from sklearn.cluster import DBSCAN
-from scipy.ndimage import gaussian_filter, binary_fill_holes, label
+from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.spatial import ConvexHull
 
 def filter_quantile(df, column, percent=0.05):
     """
-    Filter dataframe based by removing the top and bottom percent (default 0.05, leaving the 5th-95th percentile of the data)
+    Filter dataframe based by removing the top and bottom percent (default 0.05, leaving the 5th-95th percentile of the data).
     """
     lower_bound = df[column].quantile(percent)
     upper_bound = df[column].quantile(1 - percent)
@@ -19,7 +19,11 @@ def filter_quantile(df, column, percent=0.05):
     
     return filtered_df
 
-def filter_axial(df, padding=5):
+def filter_axial(df, padding=1):
+    """
+    Axial data often has many localizations at the edge of the axial range. 
+    Remove points at the maximum and minimum z, with optional padding to remove points very close to the edges.
+    """
     lower_bound = df["z [nm]"].min() + padding
     upper_bound = df["z [nm]"].max() - padding
 
@@ -28,9 +32,13 @@ def filter_axial(df, padding=5):
     return filtered_df
 
 
-def cluster_dbscan(loc_df, eps=50, min_samples=8):
+def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
+    """
+    Cluster localization data using scikit-learn's DBSCAN algorithm, taking in epsilon and min_samples parameters.
+    Clusters will be assigned a numeric ID and a random RGB color, with unclustered noise labeled as -1 and set gray.
+    """
     loc_np = loc_df[["x [nm]", "y [nm]", "z [nm]"]].to_numpy()
-    loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit_predict(loc_np)    
+    loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs).fit_predict(loc_np)    
     loc_df["cluster_label"] = loc_clust
     
     
@@ -199,3 +207,44 @@ def calc_area(locs):
         # Handles errors if points are completely collinear/flat
         return 0.0
      
+
+def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
+    """
+    Breaks a non-circular binary mask into radial contours (concentric bands)
+    using the Euclidean Distance Transform.
+    """
+    # Calculate the distance of each pixel inside the mask to the nearest background pixel
+    distance_map = distance_transform_edt(binary_mask)
+    
+    # Create discrete contour bands
+    contour_bands = np.zeros_like(distance_map, dtype=int)
+    max_dist = distance_map.max()
+    
+    if max_dist > 0:
+        # Bin the distances into the requested number of bands
+        # Band 1 is the outermost boundary, Band `num_bands` is the innermost core
+        bins = np.linspace(0, max_dist, num_bands + 1)
+        
+        # Only assign bands to pixels inside the mask
+        inside_mask = binary_mask > 0
+        contour_bands[inside_mask] = np.clip(np.digitize(distance_map[inside_mask], bins), 1, num_bands)
+        
+    if show_plots:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        
+        im1 = axes[0].imshow(distance_map.T, origin='lower', cmap='viridis')
+        axes[0].set_title('Distance Transform Map')
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+        fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+        
+        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap='tab20')
+        axes[1].set_title(f'Radial Contours ({num_bands} Bands)')
+        axes[1].set_xticks([])
+        axes[1].set_yticks([])
+        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+        
+        plt.tight_layout()
+        plt.show()
+        
+    return distance_map, contour_bands
