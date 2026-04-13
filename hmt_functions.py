@@ -312,7 +312,7 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
 TODO: 
 
 SNCR Function (KD Tree most likely)
-Localization size calculation
+Nanodomain size calculation
 Localization Density (area based and volume based)
 Density Correction
 Ripley's K implementation
