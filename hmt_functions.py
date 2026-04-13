@@ -11,6 +11,9 @@ from scipy.spatial import ConvexHull
 def filter_quantile(df, column, percent=0.05):
     """
     Filter dataframe based by removing the top and bottom percent (default 0.05, leaving the 5th-95th percentile of the data).
+    
+    Returns:
+        Pandas DataFrame: filtered_df
     """
     lower_bound = df[column].quantile(percent)
     upper_bound = df[column].quantile(1 - percent)
@@ -23,6 +26,9 @@ def filter_axial(df, padding=1):
     """
     Axial data often has many localizations at the edge of the axial range. 
     Remove points at the maximum and minimum z, with optional padding to remove points very close to the edges.
+
+    Returns:
+        Pandas DataFrame: filtered_df
     """
     lower_bound = df["z [nm]"].min() + padding
     upper_bound = df["z [nm]"].max() - padding
@@ -36,7 +42,12 @@ def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
     """
     Cluster localization data using scikit-learn's DBSCAN algorithm, taking in epsilon and min_samples parameters.
     Clusters will be assigned a numeric ID and a random RGB color, with unclustered noise labeled as -1 and set gray.
+
+    Returns:
+        Pandas DataFrame: loc_df (with cluster_label and cluster_color columns)
     """
+    loc_df = loc_df.copy()
+
     loc_np = loc_df[["x [nm]", "y [nm]", "z [nm]"]].to_numpy()
     loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs).fit_predict(loc_np)    
     loc_df["cluster_label"] = loc_clust
@@ -57,7 +68,12 @@ def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
             
     loc_df["cluster_color"] = loc_colors
 
+    return loc_df
+
 def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
+    me3_df = me3_df.copy()
+    ac_df = ac_df.copy()
+    
     me3_df["plot_size"] = me3_df['sigmax [nm]'].to_numpy()/110*scaling_factor
     ac_df["plot_size"] = ac_df['sigmax [nm]'].to_numpy()/110*scaling_factor
 
@@ -117,6 +133,12 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
     
 
 def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1, show_plots=False):
+    """
+    Binarize nucleus based on intensity thresholding in 2D histogram.
+    
+    Returns:
+        tuple: (binary_mask, me3_masked, ac_masked)
+    """
     comb_df = pd.concat([me3_df, ac_df])
     x = comb_df["x [nm]"].values
     y = comb_df["y [nm]"].values
@@ -189,24 +211,63 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
 
     return binary_mask, me3_masked, ac_masked
 
-def calc_area(locs):
+def calc_nanodomain_size(locs):
     """
-    Calculate the 2D area of a point cloud projected on the XY plane using its Convex Hull.
-    """
-    points = locs[["x [nm]", "y [nm]"]].values
+    Calculate and return the size of the nanodomain using 4 methods:
+    1) Area of xy convex hull
+    2) Volume of xyz convex hull
+    3) Average dimensions of xy bounding box
+    4) Average dimensions of xyz bounding box
     
-    # A 2D convex hull requires at least 3 non-collinear points
-    if len(points) < 3:
-        return 0.0
+    Returns:
+        tuple: (hull_size_2D, hull_size_3D, bb_size_2D, bb_size_3D)
+    """
+    points_2D = locs[["x [nm]", "y [nm]"]].values
+    points_3D = locs[["x [nm]", "y [nm]", "z [nm]"]].values
+    
+    if len(points_2D) < 4:
+        return (0.0, 0.0, 0.0, 0.0)
         
     try:
-        hull = ConvexHull(points)
-        # Note: For a 2D ConvexHull in SciPy, .volume returns the area and .area returns the perimeter
-        return hull.volume
+        hull_2D = ConvexHull(points_2D)
+        hull_3D = ConvexHull(points_3D)
+        
+        hull_size_2D = hull_2D.volume
+        hull_size_3D = hull_3D.volume
+        
+        bb_size_2D = ((points_2D.max(axis=0) - points_2D.min(axis=0)) + 
+                      (points_2D.max(axis=1) - points_2D.min(axis=1)))/2
+        
+        bb_size_3D = ((points_3D.max(axis=0) - points_3D.min(axis=0)) + 
+                      (points_3D.max(axis=1) - points_3D.min(axis=1)) + 
+                      (points_3D.max(axis=2) - points_3D.min(axis=2)))/3
+
+        return (hull_size_2D, hull_size_3D, bb_size_2D, bb_size_3D)
+    
     except Exception:
-        # Handles errors if points are completely collinear/flat
-        return 0.0
-     
+        return (0.0, 0.0, 0.0, 0.0)
+    
+def calc_loc_density(locs):
+    """
+    Calculate localization density for an individual nanodomain (or any point cloud passed in)
+    
+    Returns:
+        tuple: (density_2D, density_3D)
+    """
+    points_2D = locs[["x [nm]", "y [nm]"]].values
+    points_3D = locs[["x [nm]", "y [nm]", "z [nm]"]].values
+
+    if len(points_2D) < 4:
+        return (0.0, 0.0)
+        
+    try:
+        density_2D = len(points_2D)/ConvexHull(points_2D).volume
+        density_3D = len(points_3D)/ConvexHull(points_3D).volume
+
+        return (density_2D, density_3D)
+    
+    except Exception:
+        return (0.0, 0.0)
 
 def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
     """
@@ -310,10 +371,7 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
 
 """
 TODO: 
-
 SNCR Function (KD Tree most likely)
-Nanodomain size calculation
-Localization Density (area based and volume based)
 Density Correction
 Ripley's K implementation
 Final outputs
