@@ -212,6 +212,9 @@ def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
     """
     Breaks a non-circular binary mask into radial contours (concentric bands)
     using the Euclidean Distance Transform.
+    
+    Returns:
+        tuple: (distance_map, contour_bands)
     """
     # Calculate the distance of each pixel inside the mask to the nearest background pixel
     distance_map = distance_transform_edt(binary_mask)
@@ -255,6 +258,55 @@ def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
         
     return distance_map, contour_bands
 
+def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_plots=False, num_plots=4):
+    """
+    Subsamples the dataframes to simulate lower localization densities.
+    Generates `num_samples` evenly spaced fractions from 1.0 down to > 0.
+    
+    Returns:
+        list of tuples: Each tuple contains (me3_sampled, ac_sampled, fraction)
+    """
+    fractions = np.linspace(1.0, 1.0/num_samples, num_samples)
+    
+    sampled_data = []
+    for frac in fractions:
+        me3_samp = me3_df.sample(frac=frac, random_state=random_state) if frac < 1.0 else me3_df.copy()
+        ac_samp = ac_df.sample(frac=frac, random_state=random_state+1) if frac < 1.0 else ac_df.copy()
+        sampled_data.append((me3_samp, ac_samp, frac))
+        
+    if show_plots:
+        num_plots = min(num_plots, len(sampled_data))
+        # Grab evenly spaced indices
+        indices_to_plot = np.linspace(0, len(sampled_data) - 1, num_plots, dtype=int)
+        
+        cols = min(4, num_plots)
+        rows = int(np.ceil(num_plots / cols))
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+        if rows * cols == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+            
+        for i, ax in enumerate(axes):
+            if i < num_plots:
+                idx = indices_to_plot[i]
+                me3_samp, ac_samp, frac = sampled_data[idx]
+                
+                ax.scatter(me3_samp["x [nm]"], me3_samp["y [nm]"], s=0.05, alpha=0.3, color='blue')
+                ax.scatter(ac_samp["x [nm]"], ac_samp["y [nm]"], s=0.05, alpha=0.3, color='blue')
+                
+                ax.set_title(f"Density Fraction: {frac:.2f}")
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_aspect('equal', adjustable='box')
+            else:
+                ax.axis('off') # Hide empty subplots
+            
+        plt.tight_layout()
+        plt.show()
+
+    return sampled_data
 
 """
 TODO: 
