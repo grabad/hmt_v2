@@ -367,7 +367,7 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
         plt.tight_layout()
         plt.show()
 
-    return sampled_data
+    return sampled_data 
 
 """
 TODO: 
