@@ -6,7 +6,7 @@ import napari
 from sklearn.cluster import DBSCAN
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, cKDTree
 
 def filter_quantile(df, column, percent=0.05):
     """
@@ -268,6 +268,23 @@ def calc_loc_density(locs):
     
     except Exception:
         return (0.0, 0.0)
+    
+def calculate_nanodomain_characteristics(locs):
+    """
+    Calculates characteristics of nanodomains found via DBSCAN clustering, stores information into new dataframe
+
+    Returns:
+        Pandas DataFrame: cluster_df
+    """
+
+    num_clusters = locs['cluster_label'].max()
+    for label in locs['cluster_label']:
+        if label == -1:
+            continue
+
+
+
+    return cluster_df
 
 def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
     """
@@ -332,7 +349,7 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
     sampled_data = []
     for frac in fractions:
         me3_samp = me3_df.sample(frac=frac, random_state=random_state) if frac < 1.0 else me3_df.copy()
-        ac_samp = ac_df.sample(frac=frac, random_state=random_state+1) if frac < 1.0 else ac_df.copy()
+        ac_samp = ac_df.sample(frac=frac, random_state=random_state+1) if frac < 1.0 else ac_df.copy() 
         sampled_data.append((me3_samp, ac_samp, frac))
         
     if show_plots:
@@ -368,6 +385,7 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
         plt.show()
 
     return sampled_data 
+
 
 """
 TODO: 
