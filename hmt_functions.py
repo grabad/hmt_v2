@@ -644,7 +644,7 @@ def optimize_epsilon_power_law(fraction_dfs, gt_targets, nuclear_area_nm2, min_s
         if res.success:
             densities.append(density)
             best_epsilons.append(res.x)
-            print(f"Fraction {i+1}: Density {density:.6f} -> Target: {current_target:.2f} -> Ideal Eps: {res.x:.2f} nm")
+            print(f"Fraction {i+1}: Density {density:.6f}\n", f"Target: {current_target:.2f} -> Ideal Eps: {res.x:.2f} nm", sep="   ")
             
     # Fit the linear regression to the log-log relationship
     log_dens = np.log10(densities)
@@ -654,22 +654,39 @@ def optimize_epsilon_power_law(fraction_dfs, gt_targets, nuclear_area_nm2, min_s
     exp = par[0]
     coef = 10**(par[1])
     
+    correlation_matrix = np.corrcoef(log_dens, log_eps)
+    r_squared = correlation_matrix[0, 1]**2
+    
     if show_plot:
-        plt.figure(figsize=(6, 4))
-        plt.scatter(log_dens, log_eps, color='blue', label='Optimized Epsilons')
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
         
-        # Plot the fit line
+        # Subplot 1: Log-Log Scale
+        axes[0].scatter(log_dens, log_eps, color='blue', label='Optimized Epsilons')
         fit_line = par[0] * log_dens + par[1]
-        plt.plot(log_dens, fit_line, color='red', linestyle='--', label=f'Fit: eps = {coef:.2f} * dens^{exp:.2f}')
+        axes[0].plot(log_dens, fit_line, color='red', linestyle='--', label=f'Fit: eps = {coef:.2f} * dens^{exp:.2f}')
+        axes[0].set_xlabel('Log10(Density [locs/nm^2])')
+        axes[0].set_ylabel('Log10(Epsilon [nm])')
+        axes[0].set_title('Log-Log Scale')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
         
-        plt.xlabel('Log10(Density [locs/nm^2])')
-        plt.ylabel('Log10(Epsilon [nm])')
-        plt.title('DBSCAN Epsilon Density Calibration')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        # Subplot 2: Standard Scale
+        axes[1].scatter(densities, best_epsilons, color='blue', label='Optimized Epsilons')
+        dens_vals = np.linspace(min(densities), max(densities), 100)
+        eps_vals = coef * (dens_vals ** exp)
+        axes[1].plot(dens_vals, eps_vals, color='red', linestyle='--', label=f'Fit: eps = {coef:.2f} * dens^{exp:.2f}')
+        axes[1].set_xlabel('Density [locs/nm^2]')
+        axes[1].set_ylabel('Epsilon [nm]')
+        axes[1].set_title('Standard Scale')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.suptitle(f'DBSCAN Epsilon Density Calibration\n$R^2$ = {r_squared:.4f}')
+        plt.tight_layout()
         plt.show()
         
-    return coef, exp
+    return coef, exp, densities, best_epsilons
+
 
 """
 TODO: 
