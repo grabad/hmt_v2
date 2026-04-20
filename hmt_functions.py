@@ -8,6 +8,7 @@ from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_tr
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.qhull import QhullError
+from scipy.optimize import minimize_scalar
 
 def filter_quantile(df, column, percent=0.05):
     """
@@ -88,46 +89,54 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
     ac_noise = ac_df[ac_df["cluster_label"] == -1]
 
     viewer = napari.Viewer()
-    viewer.add_points(
-        data=ac_noise[coords],
-        features=ac_noise,
-        face_color=ac_noise["cluster_color"].tolist(),
-        border_color=ac_border, 
-        border_width=0.01, 
-        size=ac_noise["plot_size"],    
-        name="H3K27ac Noise",
-        out_of_slice_display=True
-    )           
-    viewer.add_points(
-        data=me3_noise[coords],
-        features=me3_noise,
-        face_color=me3_noise["cluster_color"].tolist(), 
-        border_color=me3_border, 
-        border_width=0.01, 
-        size=me3_noise["plot_size"],   
-        name="H3K27me3 Noise",
-        out_of_slice_display=True
-    )                     
-    viewer.add_points(
-        data=ac_nano[coords],
-        features=ac_nano,
-        face_color=ac_nano["cluster_color"].tolist(), 
-        border_color=ac_border, 
-        border_width=0.01, 
-        size=ac_nano["plot_size"],    
-        name="H3K27ac Nanodomains",
-        out_of_slice_display=True
-    )           
-    viewer.add_points(
-        data=me3_nano[coords],
-        features=me3_nano,
-        face_color=me3_nano["cluster_color"].tolist(),
-        border_color=me3_border, 
-        border_width=0.01, 
-        size=me3_nano["plot_size"],   
-        name="H3K27me3 Nanodomains",
-        out_of_slice_display=True
-    )
+    
+    if not ac_noise.empty:
+        viewer.add_points(
+            data=ac_noise[coords],
+            features=ac_noise,
+            face_color=ac_noise["cluster_color"].tolist(),
+            border_color=ac_border, 
+            border_width=0.01, 
+            size=ac_noise["plot_size"],    
+            name="H3K27ac Noise",
+            out_of_slice_display=True
+        )
+    
+    if not me3_noise.empty:   
+        viewer.add_points(
+            data=me3_noise[coords],
+            features=me3_noise,
+            face_color=me3_noise["cluster_color"].tolist(), 
+            border_color=me3_border, 
+            border_width=0.01, 
+            size=me3_noise["plot_size"],   
+            name="H3K27me3 Noise",
+            out_of_slice_display=True
+        )
+    
+    if not ac_nano.empty:                     
+        viewer.add_points(
+            data=ac_nano[coords],
+            features=ac_nano,
+            face_color=ac_nano["cluster_color"].tolist(), 
+            border_color=ac_border, 
+            border_width=0.01, 
+            size=ac_nano["plot_size"],    
+            name="H3K27ac Nanodomains",
+            out_of_slice_display=True
+        )
+        
+    if not me3_nano.empty:           
+        viewer.add_points(
+            data=me3_nano[coords],
+            features=me3_nano,
+            face_color=me3_nano["cluster_color"].tolist(),
+            border_color=me3_border, 
+            border_width=0.01, 
+            size=me3_nano["plot_size"],   
+            name="H3K27me3 Nanodomains",
+            out_of_slice_display=True
+        )
 
     viewer.dims.order = (2, 1, 0)
     viewer.dims.ndisplay = 3
@@ -212,43 +221,40 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
 
     return binary_mask, me3_masked, ac_masked
 
-def calc_nanodomain_size(hull_3D):
+def calc_nanodomain_size(locs):
     """
-    From a 3D convex hull, calculate nanodomain size using 4 methods:
-    1) Area of projected xy convex hull
-    2) Volume of xyz convex hull
-    3) Average dimensions of xy bounding box
-    4) Average dimensions of xyz bounding box
+    Calculate and return the size of the nanodomain using 4 methods.
+    Returns a dictionary of the results.
+    """
+    points_2D = locs[["x [nm]", "y [nm]"]].values
+    points_3D = locs[["x [nm]", "y [nm]", "z [nm]"]].values
     
-    Returns:
-        tuple: (hull_size_2D, hull_size_3D, bb_size_2D, bb_size_3D)
-    """
-    points_3D = hull_3D.points
-    points_2D = points_3D[:, :2]
+    # Define a default empty dictionary for failed/small clusters
+    empty_res = {'hull_2D': 0.0, 'hull_3D': 0.0, 'bb_2D': 0.0, 'bb_3D': 0.0}
     
     if len(points_2D) < 4:
-        return (0.0, 0.0, 0.0, 0.0)
+        return empty_res
         
     try:
+        hull_2D = ConvexHull(points_2D)
+        hull_3D = ConvexHull(points_3D)
+        
+        hull_size_2D = hull_2D.volume
         hull_size_3D = hull_3D.volume
         
-        # We still need to calculate the 2D hull from the projected points
-        hull_2D = ConvexHull(points_2D)
-        hull_size_2D = hull_2D.volume
-        
-        # Calculate the dimensions (length, width, height) of the axis-aligned bounding box
-        bb_dims_2D = points_2D.max(axis=0) - points_2D.min(axis=0)
-        bb_dims_3D = points_3D.max(axis=0) - points_3D.min(axis=0)
-        
-        # Average the dimensions
-        bb_size_2D = np.mean(bb_dims_2D)
-        bb_size_3D = np.mean(bb_dims_3D)
+        bb_size_2D = (points_2D.max(axis=0) - points_2D.min(axis=0)).mean()
+        bb_size_3D = (points_3D.max(axis=0) - points_3D.min(axis=0)).mean()
 
-        return (hull_size_2D, hull_size_3D, bb_size_2D, bb_size_3D)
+        # Return as a dictionary mapping the option names to the values
+        return {
+            'hull_2D': hull_size_2D,
+            'hull_3D': hull_size_3D,
+            'bb_2D': bb_size_2D,
+            'bb_3D': bb_size_3D
+        }
     
-    except QhullError:
-        # This might still happen for the 2D hull if points are collinear
-        return (0.0, 0.0, 0.0, 0.0)
+    except Exception:
+        return empty_res
     
 def calc_loc_density(hull_3D):
     """
@@ -313,7 +319,7 @@ def calculate_nanodomain_characteristics(locs):
             print(f"Warning: Could not compute convex hull for cluster {label}. Skipping.")
             continue
         
-        hull_size_2D, hull_size_3D, bb_size_2D, bb_size_3D = calc_nanodomain_size(nanodomain_hull)
+        size_measures = calc_nanodomain_size(nanodomain_hull)
         density_2D, density_3D = calc_loc_density(nanodomain_hull)
         
         # 4. Create a dictionary for the new row. This avoids the length mismatch error.
@@ -322,10 +328,10 @@ def calculate_nanodomain_characteristics(locs):
             "cluster_color": cluster_data['cluster_color'].iloc[0],
             "centroid": np.mean(nanodomain_hull.points[nanodomain_hull.vertices], axis=0),
             "vertices": nanodomain_hull.points[nanodomain_hull.vertices],
-            "hull_size_2D": hull_size_2D,
-            "hull_size_3D": hull_size_3D,
-            "bb_size_2D": bb_size_2D,
-            "bb_size_3D": bb_size_3D,
+            "hull_size_2D": size_measures.hull_2D,
+            "hull_size_3D": size_measures.hull_3D,
+            "bb_size_2D": size_measures.bb_2D,
+            "bb_size_3D": size_measures.bb_2D,
             "density_2D": density_2D,
             "density_3D": density_3D}
         
@@ -435,6 +441,235 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
 
     return sampled_data 
 
+def build_probability_map(distance_map, radial_density_profile):
+    """
+    Maps the experimental 1D density profile to the pre-calculated 3D distance shells
+    to create a 3D probability map.
+    """
+    prob_map = np.zeros_like(distance_map, dtype=float)
+    max_dist = int(np.ceil(distance_map.max()))
+    
+    # Apply the experimental density profile to the distance shells
+    for d in range(1, max_dist + 1):
+        # Find pixels that fall within this distance band (e.g., between 1 and 2 pixels away from the edge)
+        mask = (distance_map >= d) & (distance_map < d + 1)
+        
+        # Ensure we don't index out of bounds if the nucleus is exceptionally large
+        prof_idx = min(d - 1, len(radial_density_profile) - 1)
+        prob_map[mask] = radial_density_profile[prof_idx]
+        
+    return prob_map
+
+def plant_seeds(prob_map, real_z_coords, x_min, y_min, px_size=50.0, scaling_factor=1.0):
+    # 1. Roll randoms
+    random_rolls = np.random.rand(*prob_map.shape)
+    thresholds = prob_map * scaling_factor
+    seed_indices = np.argwhere(random_rolls < thresholds)
+    
+    jitter = np.random.rand(*seed_indices.shape)
+    seed_coords_2d = (seed_indices + jitter) * px_size
+    
+    # 2. Add real-world coordinate offsets back in
+    seed_coords_2d[:, 0] += x_min
+    seed_coords_2d[:, 1] += y_min
+    
+    # 3. Assign realistic Z-coordinates to the seeds by sampling the real data
+    z_samples = np.random.choice(real_z_coords, size=len(seed_coords_2d))
+    
+    # 4. Combine [X, Y] with [Z] to make an (N, 3) array
+    seed_coords_3d = np.column_stack((seed_coords_2d, z_samples))
+    
+    return seed_coords_3d
+
+def spawn_nanodomains(seed_coords, empirical_hists, z_degradation, sdis=200, step=10):
+    """
+    Uses Inverse Transform Sampling to spawn secondary localizations around seeds,
+    matching the experimental radial distribution functions. 
+    Tags all localizations with a cluster_label and assigns a random RGBA color.
+    """
+    all_points = []
+    
+    # Use enumerate to assign a unique cluster_id (0, 1, 2...) to each seed
+    for cluster_id, seed in enumerate(seed_coords):
+        
+        # Add the seed itself to the list
+        all_points.append([seed[0], seed[1], seed[2], cluster_id])
+        
+        # Step outward in increments
+        for r_step in range(step, sdis + step, step):
+            bin_idx = (r_step // step) - 1
+            
+            hist = empirical_hists[bin_idx]
+            if np.sum(hist) == 0:
+                continue
+                
+            pdf = hist / np.sum(hist)
+            cdf = np.cumsum(pdf)
+            
+            roll = np.random.rand()
+            num_to_spawn = np.searchsorted(cdf, roll) 
+            
+            if num_to_spawn == 0:
+                continue
+                
+            # Project the spawned points in 3D space
+            for _ in range(num_to_spawn):
+                radius = r_step + (np.random.rand() * step)
+                
+                theta = np.random.rand() * 2 * np.pi 
+                v = np.random.rand()
+                phi = np.arccos(2 * v - 1) 
+                
+                dx = radius * np.sin(phi) * np.cos(theta)
+                dy = radius * np.sin(phi) * np.sin(theta)
+                
+                dz = radius * np.cos(phi) * z_degradation[bin_idx]
+                
+                all_points.append([seed[0] + dx, seed[1] + dy, seed[2] + dz, cluster_id])
+                
+    # Create the base DataFrame
+    df = pd.DataFrame(all_points, columns=["x [nm]", "y [nm]", "z [nm]", "cluster_label"])
+    
+    # ==========================================
+    # --- COLOR ASSIGNMENT ---
+    # ==========================================
+    rng = np.random.default_rng(0)  # Reproducible colors
+    unique_clusters = df["cluster_label"].unique()
+    
+    # Create a dictionary mapping each cluster ID to a random color array
+    cluster_colors = {c: np.append(rng.random(3), 1) for c in unique_clusters}
+    
+    df["cluster_color"] = [cluster_colors[c] for c in df["cluster_label"]]
+    df['sigmax [nm]'] = 110.0 
+    
+    return df
+
+def extract_empirical_parameters(real_df, raw_me3_df, raw_ac_df, contour_bands, bin_size=50, sdis=200, step=10):
+    comb_df = pd.concat([raw_me3_df, raw_ac_df])
+    x_min = comb_df["x [nm]"].min()
+    y_min = comb_df["y [nm]"].min()
+    
+    coords_2d = real_df[["x [nm]", "y [nm]"]].to_numpy()
+    
+    # --- 1. Extract Radial Density Profile ---
+    x_idx = np.clip(((coords_2d[:, 0] - x_min) // bin_size).astype(int), 0, contour_bands.shape[0] - 1)
+    y_idx = np.clip(((coords_2d[:, 1] - y_min) // bin_size).astype(int), 0, contour_bands.shape[1] - 1)
+    
+    loc_bands = contour_bands[x_idx, y_idx]
+    
+    num_bands = contour_bands.max()
+    radial_density_profile = np.zeros(num_bands)
+    for i in range(1, num_bands + 1):
+        band_area = np.sum(contour_bands == i)
+        locs_in_band = np.sum(loc_bands == i)
+        if band_area > 0:
+            radial_density_profile[i-1] = locs_in_band / band_area
+            
+    # --- 2. Extract Empirical Histograms (KD-Tree) ---
+    tree = cKDTree(coords_2d)
+    radii = np.arange(step, sdis + step, step)
+    
+    empirical_hists = []
+    prev_counts = np.zeros(len(coords_2d))
+    
+    for r in radii:
+        # Get the cumulative number of neighbors for EACH individual point
+        current_counts = tree.query_ball_point(coords_2d, r, return_length=True)
+        
+        # Isolate the neighbors strictly within this specific 10nm ring
+        ring_counts_per_point = current_counts - prev_counts
+        prev_counts = current_counts
+        
+        # Build the histogram: How many points have 0 neighbors? 1 neighbor? 2?
+        max_neighbors = int(ring_counts_per_point.max())
+        if max_neighbors == 0:
+            empirical_hists.append(np.array([1.0])) # 100% chance of 0 neighbors
+        else:
+            hist, _ = np.histogram(ring_counts_per_point, bins=np.arange(max_neighbors + 2))
+            empirical_hists.append(hist)
+            
+    z_degradation = np.full(len(radii), 1.5)
+            
+    # Return x_min and y_min so we can align the generated seeds to real physical space
+    return radial_density_profile, empirical_hists, z_degradation, x_min, y_min
+
+def epsilon_cost(eps, coords, gt_target, min_samples=8, size_metric='hull_3D'):
+    labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit_predict(coords[:, :2])
+    valid_mask = labels != -1
+    
+    if not np.any(valid_mask):
+        return 99999.0 
+        
+    df = pd.DataFrame(coords[valid_mask], columns=["x [nm]", "y [nm]", "z [nm]"])
+    df['label'] = labels[valid_mask]
+    
+    sizes = []
+    for _, group_df in df.groupby('label'):
+        results = calc_nanodomain_size(group_df)
+        
+        # FIX 1: Match the uppercase 'D' in 'hull_3D'
+        # Also using size_metric directly as the fallback key
+        sizes.append(results.get(size_metric, results['hull_3D']))
+        
+    mean_size = np.mean(sizes)
+    return abs(mean_size - gt_target)
+
+
+def optimize_epsilon_power_law(fraction_dfs, gt_targets, nuclear_area_nm2, min_samples=8, size_metric='hull_3D', show_plot=True):
+    """
+    Runs the epsilon search across all density fractions and fits the log-log power law.
+    Returns the coefficients needed to dynamically cluster new cells.
+    """
+    densities = []
+    best_epsilons = []
+    
+    for i, df in enumerate(fraction_dfs):
+        coords = df[["x [nm]", "y [nm]", "z [nm]"]].to_numpy()
+        if len(coords) < min_samples:
+            continue
+            
+        density = len(coords) / nuclear_area_nm2
+        
+        # FIX 2: Pass only the SPECIFIC target for this fraction (gt_targets[i])
+        # instead of the whole list
+        current_target = gt_targets[i]
+        
+        res = minimize_scalar(
+            epsilon_cost,
+            bounds=(10, 200),
+            args=(coords, current_target, min_samples, size_metric),
+            method='bounded'
+        )
+        
+        if res.success:
+            densities.append(density)
+            best_epsilons.append(res.x)
+            print(f"Fraction {i+1}: Density {density:.6f} -> Target: {current_target:.2f} -> Ideal Eps: {res.x:.2f} nm")
+            
+    # Fit the linear regression to the log-log relationship
+    log_dens = np.log10(densities)
+    log_eps = np.log10(best_epsilons)
+    par = np.polyfit(log_dens, log_eps, 1)
+    
+    exp = par[0]
+    coef = 10**(par[1])
+    
+    if show_plot:
+        plt.figure(figsize=(6, 4))
+        plt.scatter(log_dens, log_eps, color='blue', label='Optimized Epsilons')
+        
+        # Plot the fit line
+        fit_line = par[0] * log_dens + par[1]
+        plt.plot(log_dens, fit_line, color='red', linestyle='--', label=f'Fit: eps = {coef:.2f} * dens^{exp:.2f}')
+        
+        plt.xlabel('Log10(Density [locs/nm^2])')
+        plt.ylabel('Log10(Epsilon [nm])')
+        plt.title('DBSCAN Epsilon Density Calibration')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.show()
+        
+    return coef, exp
 
 """
 TODO: 
