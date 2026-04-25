@@ -159,7 +159,7 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
 
     smoothed_map = gaussian_filter(density_map, sigma=sigma)
     binary_mask = smoothed_map > thresh
-    binary_mask = binary_fill_holes(binary_mask)
+    # binary_mask = binary_fill_holes(binary_mask)
     
     labeled_mask, num_features = label(binary_mask)
     if num_features > num_nuclei:
@@ -220,6 +220,10 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
         plt.show()
 
     return binary_mask, me3_masked, ac_masked
+
+def remove_nucleoli():
+
+    return 0
 
 def calc_nanodomain_size(locs):
     """
