@@ -50,7 +50,7 @@ def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
     """
     loc_df = loc_df.copy()
 
-    loc_np = loc_df[["x [nm]", "y [nm]", "z [nm]"]].to_numpy()
+    loc_np = loc_df[["x [nm]", "y [nm]"]].to_numpy()
     loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs).fit_predict(loc_np)    
     loc_df["cluster_label"] = loc_clust
     
@@ -159,7 +159,7 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
 
     smoothed_map = gaussian_filter(density_map, sigma=sigma)
     binary_mask = smoothed_map > thresh
-    # binary_mask = binary_fill_holes(binary_mask)
+    binary_mask = binary_fill_holes(binary_mask)
     
     labeled_mask, num_features = label(binary_mask)
     if num_features > num_nuclei:
@@ -485,6 +485,40 @@ def plant_seeds(prob_map, real_z_coords, x_min, y_min, px_size=50.0, scaling_fac
     
     return seed_coords_3d
 
+def plant_seeds_POISSON(prob_map, real_z_coords, x_min, y_min, px_size=50.0, scaling_factor=1.0):
+    """
+    Plants seeds based on the 3D probability map using a Poisson distribution.
+    Allows high-density pixels to spawn multiple seeds.
+    """
+    # 1. Calculate the expected number of seeds per pixel
+    expected_seeds = prob_map * scaling_factor
+    
+    # 2. Draw actual seed counts from a Poisson distribution
+    seed_counts = np.random.poisson(expected_seeds)
+    
+    # 3. Extract the pixel coordinates where seeds were generated
+    # If a pixel got 3 seeds, we need to duplicate its coordinates 3 times
+    unique_pixel_indices = np.argwhere(seed_counts > 0)
+    counts_per_pixel = seed_counts[seed_counts > 0]
+    
+    seed_indices = np.repeat(unique_pixel_indices, counts_per_pixel, axis=0)
+    
+    # 4. Add random sub-pixel jitter (0 to 1) to spread them across the 50x50nm bin
+    jitter = np.random.rand(*seed_indices.shape)
+    seed_coords_2d = (seed_indices + jitter) * px_size
+    
+    # 5. Add real-world coordinate offsets back in
+    seed_coords_2d[:, 0] += x_min
+    seed_coords_2d[:, 1] += y_min
+    
+    # 6. Assign realistic Z-coordinates to the seeds by sampling the real data
+    z_samples = np.random.choice(real_z_coords, size=len(seed_coords_2d))
+    
+    # 7. Combine [X, Y] with [Z] to make an (N, 3) array
+    seed_coords_3d = np.column_stack((seed_coords_2d, z_samples))
+    
+    return seed_coords_3d
+
 def spawn_nanodomains(seed_coords, empirical_hists, z_degradation, sdis=200, step=10):
     """
     Uses Inverse Transform Sampling to spawn secondary localizations around seeds,
@@ -619,7 +653,7 @@ def epsilon_cost(eps, coords, gt_target, min_samples=8, size_metric='hull_3D'):
     return abs(mean_size - gt_target)
 
 
-def optimize_epsilon_power_law(fraction_dfs, gt_targets, nuclear_area_nm2, min_samples=8, size_metric='hull_3D', show_plot=True):
+def optimize_epsilon_power_law(fraction_dfs, gt_targets, nuclear_area_nm2, min_samples=8, size_metric='bb_2D', show_plot=True):
     """
     Runs the epsilon search across all density fractions and fits the log-log power law.
     Returns the coefficients needed to dynamically cluster new cells.
