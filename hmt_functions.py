@@ -519,6 +519,47 @@ def plant_seeds_POISSON(prob_map, real_z_coords, x_min, y_min, px_size=50.0, sca
     
     return seed_coords_3d
 
+def plot_seeds_napari(me3_seeds=None, ac_seeds=None, seed_size=15):
+    """
+    Visualizes raw (N, 3) numpy matrices of ground-truth seeds in 3D.
+    
+    Args:
+        me3_seeds (np.ndarray, optional): (N, 3) matrix of H3K27me3 seeds. Plotted in green.
+        ac_seeds (np.ndarray, optional): (N, 3) matrix of H3K27ac seeds. Plotted in red.
+        seed_size (int): Visual size of the points.
+    """
+    viewer = napari.Viewer()
+    
+    # Exact colors from your clustering script
+    me3_color = [0, 0.7, 0, 1]  # Green
+    ac_color = [0.7, 0, 0, 1]   # Red
+    
+    # Plot H3K27me3 Seeds
+    if me3_seeds is not None and len(me3_seeds) > 0:
+        viewer.add_points(
+            data=me3_seeds,
+            face_color=me3_color,
+            border_width=0, 
+            size=seed_size,    
+            name="H3K27me3 Seeds",
+            out_of_slice_display=True
+        )
+        
+    # Plot H3K27ac Seeds
+    if ac_seeds is not None and len(ac_seeds) > 0:
+        viewer.add_points(
+            data=ac_seeds,
+            face_color=ac_color,
+            border_width=0, 
+            size=seed_size,    
+            name="H3K27ac Seeds",
+            out_of_slice_display=True
+        )
+
+    # Maintain the exact spatial orientation from your cluster viewer
+    viewer.dims.order = (2, 1, 0)
+    viewer.dims.ndisplay = 3
+    
 def spawn_nanodomains(seed_coords, empirical_hists, z_degradation, sdis=200, step=10):
     """
     Uses Inverse Transform Sampling to spawn secondary localizations around seeds,
