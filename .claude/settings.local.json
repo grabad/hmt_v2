@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -c \"import json; nb=json.load\\(open\\('hmt_v3 test_script.ipynb'\\)\\); [print\\(f'=== Cell {i} ===\\\\n', ''.join\\(c['source']\\)[:800], '\\\\n'\\) for i,c in enumerate\\(nb['cells']\\) if 'inner' in ''.join\\(c['source']\\).lower\\(\\) or 'outer' in ''.join\\(c['source']\\).lower\\(\\) or \\('rdf' in ''.join\\(c['source']\\).lower\\(\\) and 'extract' in ''.join\\(c['source']\\).lower\\(\\)\\)]\")"
+    ]
+  }
+}

@@ -171,3 +171,54 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
         plt.show()
 
     return sampled_data, fractions
+
+def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
+    """
+    Breaks a non-circular binary mask into radial contours (concentric bands)
+    using the Euclidean Distance Transform.
+    
+    Returns:
+        tuple: (distance_map, contour_bands)
+    """
+    # Calculate the distance of each pixel inside the mask to the nearest background pixel
+    distance_map = distance_transform_edt(binary_mask)
+    
+    # Create discrete contour bands
+    contour_bands = np.zeros_like(distance_map, dtype=int)
+    max_dist = distance_map.max()
+    
+    if max_dist > 0:
+        # Bin the distances into the requested number of bands
+        # Band 1 is the outermost boundary, Band `num_bands` is the innermost core
+        bins = np.linspace(0, max_dist, num_bands + 1)
+        
+        # Only assign bands to pixels inside the mask
+        inside_mask = binary_mask > 0
+        outside_mask = binary_mask <= 0
+        
+        contour_bands[inside_mask] = np.clip(np.digitize(distance_map[inside_mask], bins), 1, num_bands)
+        contour_bands[inside_mask] = 100 - contour_bands[inside_mask]
+        contour_bands[outside_mask] = contour_bands[outside_mask] - 1
+        
+    if show_plots:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        
+        im1 = axes[0].imshow(distance_map.T, origin='lower', cmap='viridis')
+        axes[0].set_title('Distance Transform Map')
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+        fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+        
+        cmap = plt.get_cmap('tab20_r').copy()
+        cmap.set_under('white')
+        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap=cmap, vmax=num_bands, vmin=0)
+        axes[1].set_title(f'Radial Contours ({num_bands} Bands)')
+        axes[1].set_xticks([])
+        axes[1].set_yticks([])
+        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+        
+        plt.tight_layout()
+        plt.show()
+        
+    return distance_map, contour_bands
+
