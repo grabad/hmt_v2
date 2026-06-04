@@ -120,7 +120,7 @@ def plot_seeds_napari(me3_seeds=None, ac_seeds=None, seed_size=15):
     viewer.dims.order = (2, 1, 0)
     viewer.dims.ndisplay = 3
     
-def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5):
+def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=True):
     """
     2D scatter plot (XY projection) of localizations from spawn_nanodomains.
     Each cluster_label is drawn in a distinct color.
@@ -141,7 +141,7 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
         ax.scatter(group['x [nm]'], group['y [nm]'],
                    s=point_size, alpha=alpha, color=color)
 
-    if seeds is not None:
+    if seeds is not None and plot_seeds:
         seeds = np.asarray(seeds)
         ax.scatter(seeds[:, 0], seeds[:, 1],
                    s=80, color='red', marker='*', zorder=5, label='Seeds')
@@ -155,7 +155,7 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     plt.tight_layout()
     plt.show()
 
-def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5):
+def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=False):
     """
     3D scatter plot of localizations from spawn_nanodomains.
     Each cluster_label is drawn in a distinct color.
@@ -176,7 +176,7 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
         ax.scatter(group['x [nm]'], group['y [nm]'], group['z [nm]'],
                    s=point_size, alpha=alpha, color=color)
 
-    if seeds is not None:
+    if seeds is not None and plot_seeds:
         seeds = np.asarray(seeds)
         ax.scatter(seeds[:, 0], seeds[:, 1], seeds[:, 2],
                    s=80, color='red', marker='*', zorder=5, label='Seeds')

@@ -40,6 +40,47 @@ def assign_contour_bands(df, contour_bands, bin_size=50):
     return df
 
 
+def extract_radial_density_profile(df, contour_bands, x_min, y_min, bin_size=50):
+    """
+    Extracts localization density per contour band from experimental data.
+
+    For each band, divides the number of localizations in that band by the
+    number of pixels in that band (a proxy for band area). The result is the
+    band_density_profile argument for place_seeds — it encodes where in the
+    nucleus the mark is enriched (peripheral vs. interior).
+
+    Band numbering from create_radial_contours: 99 = outermost periphery,
+    0 = innermost core, -1 = outside nucleus.
+
+    Pass localizations from a single channel so the profile reflects only
+    that mark's spatial distribution.
+
+    Args:
+        df:            DataFrame with [x [nm], y [nm]] from a single channel
+        contour_bands: 2D int array from create_radial_contours
+        x_min:         x origin in nm (min x used to build the nucleus mask)
+        y_min:         y origin in nm
+        bin_size:      pixel size in nm (must match what was used to build contour_bands)
+
+    Returns:
+        profile: 1D float array of length (max_band + 1), density per band
+    """
+    coords = df[["x [nm]", "y [nm]"]].to_numpy()
+    x_idx = np.clip(((coords[:, 0] - x_min) / bin_size).astype(int), 0, contour_bands.shape[0] - 1)
+    y_idx = np.clip(((coords[:, 1] - y_min) / bin_size).astype(int), 0, contour_bands.shape[1] - 1)
+    loc_bands = contour_bands[x_idx, y_idx]
+
+    num_bands = int(contour_bands.max()) + 1
+    profile = np.zeros(num_bands, dtype=float)
+    for b in range(num_bands):
+        n_pixels = int(np.sum(contour_bands == b))
+        n_locs = int(np.sum(loc_bands == b))
+        if n_pixels > 0:
+            profile[b] = n_locs / n_pixels
+
+    return profile
+
+
 def extract_empirical_parameters(df, sdis=200, step=10):
     """
     Extracts the RDF and ADF from experimental localization data,
@@ -114,6 +155,152 @@ def extract_n_locs_from_rdf(rdf, step=10):
     ring_areas = np.pi * (radii**2 - (radii - step)**2)
     
     return float(np.sum(rdf * ring_areas))
+
+
+def estimate_noise_fraction(df, contour_bands, x_min, y_min, rdf=None, sdis=200, step=10,
+                            bin_size=50, enrichment_threshold=1.2, verbose=True):
+    """
+    Estimates the fraction of noise localizations using local density thresholding.
+
+    For each point, counts 2D neighbors within a search radius and compares to the
+    expected count under a purely random (uniform Poisson) process: rho_total * pi * r².
+    Points below enrichment_threshold × that expectation are classified as noise.
+
+    If rdf is provided, the search radius is derived automatically as the radius where
+    the cumulative RDF integral reaches 90% of its total — the natural domain scale.
+
+    Choosing enrichment_threshold:
+      In SMLM data, background density is often comparable to domain density, so the
+      domain signal only modestly exceeds background at the domain scale. A threshold
+      of 1.1–1.3 (10–30% above random) is typically appropriate. Threshold=2.0 requires
+      the domain signal to double the background, which is too strict for most SMLM marks.
+      If f_noise is near 1.0, lower the threshold. If it is near 0, raise it.
+      A biologically reasonable range for SMLM chromatin marks is 0.4–0.8.
+
+    Args:
+        df:                   DataFrame with [x [nm], y [nm]]
+        contour_bands:        2D int array from create_radial_contours
+        x_min:                x origin in nm used to build the nucleus mask
+        y_min:                y origin in nm
+        rdf:                  corrected RDF from extract_empirical_parameters (recommended)
+        sdis:                 neighbor search radius in nm, used only if rdf is None
+        step:                 RDF bin width in nm (must match extraction step)
+        bin_size:             pixel size in nm (must match contour_bands)
+        enrichment_threshold: multiples of random expectation below which a point is noise
+        verbose:              if True, prints the auto-derived domain scale and threshold
+
+    Returns:
+        f_noise: float in [0, 1]
+    """
+    if rdf is not None:
+        rdf_arr = np.asarray(rdf, dtype=float)
+        radii = (np.arange(len(rdf_arr)) + 1) * step
+        ring_areas = np.pi * (radii**2 - (radii - step)**2)
+        cumulative = np.cumsum(rdf_arr * ring_areas)
+        total = cumulative[-1]
+        if total > 0:
+            sdis = float(radii[cumulative >= 0.9 * total][0])
+
+    coords_2d = df[["x [nm]", "y [nm]"]].to_numpy()
+    A_nucleus = float(np.sum(contour_bands >= 0)) * bin_size**2
+    rho_total = len(df) / A_nucleus
+    count_threshold = enrichment_threshold * rho_total * np.pi * sdis**2
+
+    if verbose:
+        print(f"  domain scale: {sdis:.0f} nm | "
+              f"expected random count: {rho_total * np.pi * sdis**2:.1f} | "
+              f"threshold: {count_threshold:.1f} neighbors")
+
+    tree = cKDTree(coords_2d)
+    n_neighbors = np.array(tree.query_ball_point(coords_2d, sdis, return_length=True), dtype=float) - 1
+
+    return float(np.mean(n_neighbors < count_threshold))
+
+
+def place_seeds(contour_bands, band_density_profile, real_z_coords, x_min, y_min, px_size=50.0, scaling_factor=1.0):
+    """
+    Places nanodomain seeds within the nucleus using a radially-weighted Poisson process.
+
+    Each pixel inside the nucleus draws its seed count independently from
+    Poisson(density * scaling_factor), where density comes from band_density_profile.
+    This correctly allows high-density pixels to host multiple seeds and zero-density
+    pixels to host none. Sub-pixel jitter prevents seeds from landing on a pixel-center grid.
+
+    Z-coordinates are sampled from the empirical distribution of real_z_coords rather
+    than inferred from the 2D mask, which captures the true axial extent of the nucleus.
+
+    Args:
+        contour_bands:        2D int array from create_radial_contours (-1 = outside nucleus)
+        band_density_profile: 1D float array from extract_radial_density_profile
+        real_z_coords:        1D array of z values from real localizations (nm), sampled for z
+        x_min:                x origin in nm used to build the nucleus mask
+        y_min:                y origin in nm
+        px_size:              pixel size in nm (must match bin_size in contour_bands)
+        scaling_factor:       multiplier on seed density; tune to match desired domain count
+
+    Returns:
+        np.ndarray of shape (N, 3) — seed [x, y, z] coordinates in nm
+    """
+    band_density_profile = np.asarray(band_density_profile, dtype=float)
+
+    inside = contour_bands >= 0
+    prob_map = np.zeros_like(contour_bands, dtype=float)
+    prob_map[inside] = band_density_profile[contour_bands[inside]]
+
+    seed_counts = np.random.poisson(prob_map * scaling_factor)
+    pixel_indices = np.argwhere(seed_counts > 0)
+    if len(pixel_indices) == 0:
+        return np.empty((0, 3), dtype=float)
+
+    counts = seed_counts[seed_counts > 0]
+    seed_indices = np.repeat(pixel_indices, counts, axis=0)
+
+    jitter = np.random.rand(*seed_indices.shape)
+    xy = (seed_indices + jitter) * px_size
+    xy[:, 0] += x_min
+    xy[:, 1] += y_min
+
+    z = np.random.choice(np.asarray(real_z_coords, dtype=float), size=len(xy))
+
+    return np.column_stack([xy, z])
+
+
+def add_noise_locs(n_noise, contour_bands, real_z_coords, x_min, y_min, px_size=50.0):
+    """
+    Adds uniformly distributed background localizations within the nucleus.
+
+    These represent the non-domain fraction of the data — points that are not part
+    of any nanodomain and were removed from the RDF by baseline subtraction.
+    Estimate n_noise as int(f_noise * len(real_df)), where f_noise comes from DBSCAN
+    (fraction of points with label == -1).
+
+    Args:
+        n_noise:       number of noise localizations to generate
+        contour_bands: 2D int array from create_radial_contours (-1 = outside nucleus)
+        real_z_coords: 1D array of z values from real localizations (nm), sampled for z
+        x_min:         x origin in nm used to build the nucleus mask
+        y_min:         y origin in nm
+        px_size:       pixel size in nm
+
+    Returns:
+        pd.DataFrame with columns [x [nm], y [nm], z [nm], cluster_label]
+        cluster_label is -1 for all noise points
+    """
+    inside_indices = np.argwhere(contour_bands >= 0)
+    chosen = inside_indices[np.random.randint(0, len(inside_indices), size=n_noise)]
+
+    jitter = np.random.rand(*chosen.shape)
+    xy = (chosen + jitter) * px_size
+    xy[:, 0] += x_min
+    xy[:, 1] += y_min
+
+    z = np.random.choice(np.asarray(real_z_coords, dtype=float), size=n_noise)
+
+    return pd.DataFrame(
+        np.column_stack([xy, z, np.full(n_noise, -1)]),
+        columns=["x [nm]", "y [nm]", "z [nm]", "cluster_label"],
+    )
+
 
 def spawn_nanodomains(seeds, rdf=_default_rdf, adf=_default_adf, n_locs=50, step=10, start_label=0):
     """
