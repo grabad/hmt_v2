@@ -6,6 +6,7 @@ import napari
 from sklearn.cluster import DBSCAN
 from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.qhull import QhullError
 from scipy.optimize import minimize_scalar
@@ -155,7 +156,7 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     plt.tight_layout()
     plt.show()
 
-def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=False):
+def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=False, plot_hulls=True, hull_alpha=0.15):
     """
     3D scatter plot of localizations from spawn_nanodomains.
     Each cluster_label is drawn in a distinct color.
@@ -166,6 +167,8 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
         title: plot title
         point_size: marker size for localizations
         alpha: opacity of localization points
+        plot_hulls: if True, draw the convex hull of each cluster
+        hull_alpha: opacity of convex hull faces
     """
     fig = plt.figure(figsize=(7, 6), label=' ')
     ax = fig.add_subplot(111, projection='3d')
@@ -173,8 +176,19 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     cmap = plt.get_cmap('tab10')
     for cluster_id, group in df.groupby('cluster_label'):
         color = cmap(int(cluster_id) % 10)
-        ax.scatter(group['x [nm]'], group['y [nm]'], group['z [nm]'],
+        pts = group[['x [nm]', 'y [nm]', 'z [nm]']].to_numpy()
+        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
                    s=point_size, alpha=alpha, color=color)
+
+        if plot_hulls and len(pts) >= 4:
+            try:
+                hull = ConvexHull(pts)
+                faces = [pts[simplex] for simplex in hull.simplices]
+                poly = Poly3DCollection(faces, alpha=hull_alpha,
+                                        facecolor=color, edgecolor=color, linewidth=0.7)
+                ax.add_collection3d(poly)
+            except QhullError:
+                pass
 
     if seeds is not None and plot_seeds:
         seeds = np.asarray(seeds)
