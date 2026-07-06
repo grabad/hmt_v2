@@ -217,6 +217,42 @@ def estimate_noise_fraction(df, contour_bands, x_min, y_min, rdf=None, sdis=200,
     return float(np.mean(n_neighbors < count_threshold))
 
 
+def make_grid_seeds(n_rows=10, n_cols=10, spacing=500.0, z_values=None, origin=(0.0, 0.0, 0.0)):
+    """
+    Generates a regular rectangular grid of seed coordinates for sensitivity analysis.
+
+    Seeds are placed on a uniform grid with a fixed inter-seed spacing. Z coordinates
+    are either fixed at a constant value or randomly sampled from a provided array
+    (matching the behaviour of place_seeds).
+
+    Args:
+        n_rows:    number of rows in the grid
+        n_cols:    number of columns in the grid
+        spacing:   centre-to-centre distance between adjacent seeds in nm
+        z_values:  scalar z (nm) applied to every seed, or 1-D array to sample from.
+                   Defaults to 0.0 when None.
+        origin:    (x0, y0, z0) offset of the grid's bottom-left corner in nm
+
+    Returns:
+        np.ndarray of shape (n_rows * n_cols, 3) with [x, y, z] in nm
+    """
+    x0, y0, z0 = origin
+
+    col_idx, row_idx = np.meshgrid(np.arange(n_cols), np.arange(n_rows))
+    xs = x0 + col_idx.ravel() * spacing
+    ys = y0 + row_idx.ravel() * spacing
+
+    n_seeds = n_rows * n_cols
+    if z_values is None:
+        zs = np.full(n_seeds, float(z0))
+    elif np.ndim(z_values) == 0:
+        zs = np.full(n_seeds, float(z_values))
+    else:
+        zs = np.random.choice(np.asarray(z_values, dtype=float), size=n_seeds)
+
+    return np.column_stack([xs, ys, zs])
+
+
 def place_seeds(contour_bands, band_density_profile, real_z_coords, x_min, y_min, px_size=50.0, scaling_factor=1.0):
     """
     Places nanodomain seeds within the nucleus using a radially-weighted Poisson process.
@@ -263,6 +299,38 @@ def place_seeds(contour_bands, band_density_profile, real_z_coords, x_min, y_min
     z = np.random.choice(np.asarray(real_z_coords, dtype=float), size=len(xy))
 
     return np.column_stack([xy, z])
+
+
+def add_sim_noise(sim_df, noise_fraction=0.1):
+    """
+    Adds uniformly distributed noise localizations within the bounding box of a simulation.
+
+    The noise count scales with the simulation size, making it straightforward to
+    sweep noise levels for sensitivity analysis without requiring a nucleus mask.
+    All noise points are assigned cluster_label == -1.
+
+    Args:
+        sim_df:         DataFrame from spawn_nanodomains with [x [nm], y [nm], z [nm], cluster_label]
+        noise_fraction: fraction of len(sim_df) to generate as noise (e.g. 0.2 = 20%)
+
+    Returns:
+        pd.DataFrame with columns [x [nm], y [nm], z [nm], cluster_label],
+        containing only the noise rows (cluster_label == -1 for all)
+    """
+    n_noise = int(noise_fraction * len(sim_df))
+    if n_noise == 0:
+        return pd.DataFrame(columns=sim_df.columns)
+
+    xs = np.random.uniform(sim_df["x [nm]"].min(), sim_df["x [nm]"].max(), size=n_noise)
+    ys = np.random.uniform(sim_df["y [nm]"].min(), sim_df["y [nm]"].max(), size=n_noise)
+    zs = np.random.uniform(sim_df["z [nm]"].min(), sim_df["z [nm]"].max(), size=n_noise)
+
+    return pd.DataFrame({
+        "x [nm]": xs,
+        "y [nm]": ys,
+        "z [nm]": zs,
+        "cluster_label": np.full(n_noise, -1, dtype=float),
+    })
 
 
 def add_noise_locs(n_noise, contour_bands, real_z_coords, x_min, y_min, px_size=50.0):

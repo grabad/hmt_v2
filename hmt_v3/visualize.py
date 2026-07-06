@@ -121,10 +121,10 @@ def plot_seeds_napari(me3_seeds=None, ac_seeds=None, seed_size=15):
     viewer.dims.order = (2, 1, 0)
     viewer.dims.ndisplay = 3
     
-def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=True):
+def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=True, ax=None):
     """
     2D scatter plot (XY projection) of localizations from spawn_nanodomains.
-    Each cluster_label is drawn in a distinct color.
+    Each cluster_label is drawn in a distinct color; cluster_label == -1 is drawn in gray.
 
     Args:
         df: DataFrame with columns [x [nm], y [nm], z [nm], cluster_label]
@@ -132,12 +132,20 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
         title: plot title
         point_size: marker size for localizations
         alpha: opacity of localization points
+        ax: optional existing Axes to draw into; if None a new figure is created
     """
-    fig = plt.figure(figsize=(7, 6), label=' ')
-    ax = fig.add_subplot(111)
+    _standalone = ax is None
+    if _standalone:
+        fig = plt.figure(figsize=(7, 6), label=' ')
+        ax = fig.add_subplot(111)
+
+    noise = df[df['cluster_label'] == -1]
+    if not noise.empty:
+        ax.scatter(noise['x [nm]'], noise['y [nm]'],
+                   s=point_size, alpha=alpha * 0.6, color='gray', label='Noise')
 
     cmap = plt.get_cmap('tab10')
-    for cluster_id, group in df.groupby('cluster_label'):
+    for cluster_id, group in df[df['cluster_label'] != -1].groupby('cluster_label'):
         color = cmap(int(cluster_id) % 10)
         ax.scatter(group['x [nm]'], group['y [nm]'],
                    s=point_size, alpha=alpha, color=color)
@@ -153,8 +161,9 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     ax.set_title(title)
     ax.set_aspect('equal')
 
-    plt.tight_layout()
-    plt.show()
+    if _standalone:
+        plt.tight_layout()
+        plt.show()
 
 def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=False, plot_hulls=True, hull_alpha=0.15):
     """
@@ -173,8 +182,14 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     fig = plt.figure(figsize=(7, 6), label=' ')
     ax = fig.add_subplot(111, projection='3d')
 
+    noise = df[df['cluster_label'] == -1]
+    if not noise.empty:
+        pts = noise[['x [nm]', 'y [nm]', 'z [nm]']].to_numpy()
+        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
+                   s=point_size, alpha=alpha * 0.6, color='gray', label='Noise')
+
     cmap = plt.get_cmap('tab10')
-    for cluster_id, group in df.groupby('cluster_label'):
+    for cluster_id, group in df[df['cluster_label'] != -1].groupby('cluster_label'):
         color = cmap(int(cluster_id) % 10)
         pts = group[['x [nm]', 'y [nm]', 'z [nm]']].to_numpy()
         ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
