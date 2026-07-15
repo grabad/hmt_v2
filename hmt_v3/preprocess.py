@@ -43,6 +43,33 @@ def filter_axial(df, padding=1):
 
     return filtered_df
 
+def mask_origin(*dfs):
+    """
+    Returns the (x_min, y_min) origin in nm of the pixel grid that binarize_nucleus
+    and create_radial_contours build.
+
+    binarize_nucleus starts its 2D histogram at the minimum x and y of the
+    dataframes it is given (before any masking). Every downstream function that maps
+    localizations onto the mask or the contour bands — extract_radial_density_profile,
+    assign_contour_bands, place_seeds / place_seeds_matched, add_noise_locs,
+    measure_pair_correlation, generate_nucleus — must use this same origin, or the
+    localizations are shifted into the wrong bands (a small nm offset can be many
+    pixels, which empties the core bands).
+
+    IMPORTANT: pass the SAME dataframes you gave binarize_nucleus (the pre-mask
+    channels), not the masked outputs it returns. Masking drops outlying points, so
+    the masked minimum is larger than the grid origin.
+
+    Args:
+        *dfs: the pre-mask dataframes passed to binarize_nucleus, each with
+              columns [x [nm], y [nm]]
+
+    Returns:
+        (x_min, y_min) in nm
+    """
+    comb = pd.concat(dfs)
+    return float(comb["x [nm]"].min()), float(comb["y [nm]"].min())
+
 def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1, show_plots=False):
     """
     Binarize nucleus based on intensity thresholding in 2D histogram.

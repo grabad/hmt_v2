@@ -264,3 +264,96 @@ def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_seed_spacing(empirical_nnd, sim_seeds, bins=30, label_real='Real domains',
+                      label_sim='Simulated seeds', ax=None):
+    """
+    Compares the inter-domain nearest-neighbour distance (NND) distribution of the
+    real nucleus against the simulated seeds. Use this to verify that a
+    spacing-matched placement (place_seeds_matched / generate_nucleus) reproduces
+    the empirical domain arrangement rather than an independent-Poisson one.
+
+    Args:
+        empirical_nnd: 1D array of real NNDs (from simulate.measure_seed_spacing)
+        sim_seeds:     (N, 3) or (N, 2) array of simulated seed coordinates
+        bins:          number of histogram bins (shared across both curves)
+        label_real:    legend label for the empirical distribution
+        label_sim:     legend label for the simulated distribution
+        ax:            optional existing Axes; a new figure is created if None
+    """
+    empirical_nnd = np.asarray(empirical_nnd, dtype=float)
+    sim_seeds = np.asarray(sim_seeds, dtype=float)
+
+    tree = cKDTree(sim_seeds[:, :2])
+    d, _ = tree.query(sim_seeds[:, :2], k=2)
+    sim_nnd = d[:, 1]
+
+    _standalone = ax is None
+    if _standalone:
+        fig = plt.figure(figsize=(7, 5), label=' ')
+        ax = fig.add_subplot(111)
+
+    lo = 0.0
+    hi = max(empirical_nnd.max(), sim_nnd.max())
+    edges = np.linspace(lo, hi, bins + 1)
+
+    ax.hist(empirical_nnd, bins=edges, density=True, alpha=0.5,
+            color='#4C72B0', label=f'{label_real} (median {np.median(empirical_nnd):.0f} nm)')
+    ax.hist(sim_nnd, bins=edges, density=True, alpha=0.5,
+            color='#DD8452', label=f'{label_sim} (median {np.median(sim_nnd):.0f} nm)')
+
+    ax.set_xlabel('Nearest-neighbour distance between domains (nm)')
+    ax.set_ylabel('Probability density')
+    ax.set_title('Inter-domain spacing: real vs. simulated')
+    ax.legend()
+
+    if _standalone:
+        plt.tight_layout()
+        plt.show()
+
+
+def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
+                          label_real='Real', label_sim='Simulated'):
+    """
+    Plots Ripley's L(r) - r and the pair correlation g(r) for the real cell and,
+    optionally, the simulated reconstruction, on shared axes. Overlap means the
+    simulation reproduces the density-independent clustering structure measured by
+    simulate.measure_pair_correlation.
+
+    Reference lines: L(r) - r = 0 and g(r) = 1 are complete spatial randomness.
+    L(r) - r > 0 (g > 1) is clustering; L(r) - r < 0 (g < 1) is regularity.
+
+    Args:
+        pcf_real:   dict from simulate.measure_pair_correlation (real cell)
+        pcf_sim:    optional dict from measure_pair_correlation (simulation)
+        r_domain:   optional domain-scale radius (nm) to mark with a vertical line
+        label_real: legend label for the real curve
+        label_sim:  legend label for the simulated curve
+    """
+    _, axes = plt.subplots(1, 2, figsize=(11, 4.5), label=' ')
+
+    axes[0].axhline(0, color='gray', lw=0.8, ls='--')
+    axes[0].plot(pcf_real['r'], pcf_real['L'] - pcf_real['r'], color='#4C72B0', label=label_real)
+    if pcf_sim is not None:
+        axes[0].plot(pcf_sim['r'], pcf_sim['L'] - pcf_sim['r'], color='#DD8452', label=label_sim)
+    axes[0].set_xlabel('r (nm)')
+    axes[0].set_ylabel('L(r) - r (nm)')
+    axes[0].set_title('Ripley L  (clustering vs. CSR)')
+    axes[0].legend()
+
+    axes[1].axhline(1, color='gray', lw=0.8, ls='--')
+    axes[1].plot(pcf_real['r'], pcf_real['g'], color='#4C72B0', label=label_real)
+    if pcf_sim is not None:
+        axes[1].plot(pcf_sim['r'], pcf_sim['g'], color='#DD8452', label=label_sim)
+    axes[1].set_xlabel('r (nm)')
+    axes[1].set_ylabel('g(r)')
+    axes[1].set_title('Pair correlation')
+    axes[1].legend()
+
+    if r_domain is not None:
+        for ax in axes:
+            ax.axvline(r_domain, color='green', lw=0.8, ls=':')
+
+    plt.tight_layout()
+    plt.show()
