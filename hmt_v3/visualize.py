@@ -221,7 +221,7 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
     plt.show()
 
 
-def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10):
+def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10, rdf_title=None, adf_title=None):
     """
     Plots the RDF and ADF for H3K27me3 and H3K27ac on shared axes for direct comparison.
 
@@ -241,14 +241,17 @@ def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10):
     z_centers   = (np.arange(len(me3_adf)) + 0.5) * step
     bar_width   = step * 0.45
 
-    _, axes = plt.subplots(1, 2, figsize=(9, 4), label=' ')
+    _, axes = plt.subplots(1, 2, figsize=(10, 4), label=' ')
 
     # RDF
     axes[0].bar(r_centers - bar_width / 2, me3_rdf, width=bar_width, color='#77DD76', label='H3K27me3')
     axes[0].bar(r_centers + bar_width / 2, ac_rdf,  width=bar_width, color='#FF6962', label='H3K27ac')
     axes[0].set_xlabel('Radial distance (nm)')
-    axes[0].set_ylabel('Neighbor density (locs / nm²)')
-    axes[0].set_title('Radial Distribution Function')
+    axes[0].set_ylabel('Neighbor Density Above Background (locs / nm²)')
+    if rdf_title is not None:
+        axes[0].set_title(rdf_title)
+    else:
+        axes[0].set_title('Radial Distribution Function')
     axes[0].legend()
 
     # ADF — normalize so both channels are directly comparable
@@ -259,7 +262,10 @@ def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10):
     axes[1].bar(z_centers + bar_width / 2, ac_adf_norm,  width=bar_width, color='#FF6962', label='H3K27ac')
     axes[1].set_xlabel('|Z offset| (nm)')
     axes[1].set_ylabel('Probability')
-    axes[1].set_title('Axial Distribution Function')
+    if adf_title is not None:
+        axes[1].set_title(adf_title)
+    else:
+        axes[1].set_title('Axial Distribution Function')
     axes[1].legend()
 
     plt.tight_layout()
@@ -339,7 +345,7 @@ def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
         axes[0].plot(pcf_sim['r'], pcf_sim['L'] - pcf_sim['r'], color='#DD8452', label=label_sim)
     axes[0].set_xlabel('r (nm)')
     axes[0].set_ylabel('L(r) - r (nm)')
-    axes[0].set_title('Ripley L  (clustering vs. CSR)')
+    axes[0].set_title("Clustering Similarity via Ripley's L")
     axes[0].legend()
 
     axes[1].axhline(1, color='gray', lw=0.8, ls='--')
@@ -348,12 +354,12 @@ def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
         axes[1].plot(pcf_sim['r'], pcf_sim['g'], color='#DD8452', label=label_sim)
     axes[1].set_xlabel('r (nm)')
     axes[1].set_ylabel('g(r)')
-    axes[1].set_title('Pair correlation')
+    axes[1].set_title('Clustering Similarity via Pairwise Correlation')
     axes[1].legend()
 
-    if r_domain is not None:
-        for ax in axes:
-            ax.axvline(r_domain, color='green', lw=0.8, ls=':')
+    # if r_domain is not None:
+    #     for ax in axes:
+    #         ax.axvline(r_domain, color='green', lw=0.8, ls=':')
 
     plt.tight_layout()
     plt.show()
