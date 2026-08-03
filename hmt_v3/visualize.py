@@ -11,6 +11,8 @@ from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.qhull import QhullError
 from scipy.optimize import minimize_scalar
 
+
+
 def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
     me3_df = me3_df.copy()
     ac_df = ac_df.copy()
@@ -244,10 +246,10 @@ def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10, rdf_title=None, adf_
     _, axes = plt.subplots(1, 2, figsize=(10, 4), label=' ')
 
     # RDF
-    axes[0].bar(r_centers - bar_width / 2, me3_rdf, width=bar_width, color='#77DD76', label='H3K27me3')
-    axes[0].bar(r_centers + bar_width / 2, ac_rdf,  width=bar_width, color='#FF6962', label='H3K27ac')
+    axes[0].bar(r_centers - bar_width / 2, me3_rdf*1000, width=bar_width, color='#77DD76', label='H3K27me3')
+    axes[0].bar(r_centers + bar_width / 2, ac_rdf*1000,  width=bar_width, color='#FF6962', label='H3K27ac')
     axes[0].set_xlabel('Radial distance (nm)')
-    axes[0].set_ylabel('Neighbor Density Above Background (locs / nm²)')
+    axes[0].set_ylabel('Local Density (millilocs / nm²)')
     if rdf_title is not None:
         axes[0].set_title(rdf_title)
     else:
@@ -319,8 +321,45 @@ def plot_seed_spacing(empirical_nnd, sim_seeds, bins=30, label_real='Real domain
         plt.show()
 
 
+def plot_domain_packing(result, ax=None):
+    """
+    Plots the domain overlap-margin distribution from
+    simulate.diagnose_domain_packing: nearest-neighbour centroid distance minus
+    the sum of the two domains' radii, for every true domain. Negative values
+    mean that domain's nearest neighbour geometrically overlaps it — a limit no
+    DBSCAN parameter choice can get past, since the two domains' localizations
+    are genuinely interspersed in the underlying point cloud.
+
+    Args:
+        result: dict from simulate.diagnose_domain_packing
+        ax:     optional existing Axes; a new figure is created if None
+    """
+    margin = np.asarray(result['overlap_margin'], dtype=float)
+    if len(margin) == 0:
+        print("Fewer than 2 domains — nothing to plot.")
+        return
+
+    _standalone = ax is None
+    if _standalone:
+        fig = plt.figure(figsize=(7, 5), label=' ')
+        ax = fig.add_subplot(111)
+
+    ax.hist(margin, bins=40, color='#4C72B0', alpha=0.8)
+    ax.axvline(0, color='black', linestyle='--', linewidth=1.2,
+              label=f'{result["frac_overlapping"]:.0%} of domains overlap their nearest neighbour')
+
+    ax.set_xlabel('Nearest-neighbour overlap margin (nm)\n[NN centroid distance − (radius₁ + radius₂)]')
+    ax.set_ylabel('Number of domains')
+    ax.set_title('Domain packing: negative = geometrically overlapping')
+    ax.legend()
+
+    if _standalone:
+        plt.tight_layout()
+        plt.show()
+
+
 def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
-                          label_real='Real', label_sim='Simulated'):
+                          label_real='Real', label_sim='Simulated', color=None):
     """
     Plots Ripley's L(r) - r and the pair correlation g(r) for the real cell and,
     optionally, the simulated reconstruction, on shared axes. Overlap means the
@@ -339,27 +378,88 @@ def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
     """
     _, axes = plt.subplots(1, 2, figsize=(11, 4.5), label=' ')
 
-    axes[0].axhline(0, color='gray', lw=0.8, ls='--')
-    axes[0].plot(pcf_real['r'], pcf_real['L'] - pcf_real['r'], color='#4C72B0', label=label_real)
+    if color == 'green':
+        line_color = '#77DD76'
+
+    elif color == 'red':
+        line_color = '#FF6962'
+    else:
+        line_color = 'black'
+
+    lw = 2
+    axes[0].plot(pcf_real['r'], pcf_real['L'] - pcf_real['r'], color=line_color, label=label_real, lw=lw)
     if pcf_sim is not None:
-        axes[0].plot(pcf_sim['r'], pcf_sim['L'] - pcf_sim['r'], color='#DD8452', label=label_sim)
+        axes[0].plot(pcf_sim['r'], pcf_sim['L'] - pcf_sim['r'], color=line_color, label=label_sim, ls='--', lw=lw)
     axes[0].set_xlabel('r (nm)')
     axes[0].set_ylabel('L(r) - r (nm)')
     axes[0].set_title("Clustering Similarity via Ripley's L")
-    axes[0].legend()
+    axes[0].legend(loc='upper right')
 
-    axes[1].axhline(1, color='gray', lw=0.8, ls='--')
-    axes[1].plot(pcf_real['r'], pcf_real['g'], color='#4C72B0', label=label_real)
+    axes[1].plot(pcf_real['r'], pcf_real['g'], color=line_color, label=label_real, lw=lw)
     if pcf_sim is not None:
-        axes[1].plot(pcf_sim['r'], pcf_sim['g'], color='#DD8452', label=label_sim)
+        axes[1].plot(pcf_sim['r'], pcf_sim['g'], color=line_color, label=label_sim, ls='--', lw=lw)
     axes[1].set_xlabel('r (nm)')
     axes[1].set_ylabel('g(r)')
     axes[1].set_title('Clustering Similarity via Pairwise Correlation')
-    axes[1].legend()
+    axes[1].legend(loc='upper right')
 
     # if r_domain is not None:
     #     for ax in axes:
     #         ax.axvline(r_domain, color='green', lw=0.8, ls=':')
 
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_dbscan_calibration(me3_result, ac_result, title='DBSCAN Calibration: H3K27me3 vs H3K27ac'):
+    """
+    Plots the H3K27me3 and H3K27ac DBSCAN calibration curves on separate axes
+    (one row per mark): eps fit as a power law of density, min_samples fit as
+    a linear function of density. Reads the 'densities' / 'best_epsilons' /
+    'eps_coef' / 'eps_exp' / 'eps_r_squared' / 'best_min_samples' /
+    'min_samples_slope' / 'min_samples_intercept' / 'min_samples_r_squared'
+    keys returned by simulate.optimize_dbscan_size_matching.
+
+    Args:
+        me3_result: dict returned by optimize_dbscan_size_matching for H3K27me3
+        ac_result:  dict returned by optimize_dbscan_size_matching for H3K27ac
+        title:      figure suptitle
+    """
+    me3_color = '#77DD76'
+    ac_color = '#FF6962'
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), label=' ')
+
+    for row, (result, color, label) in enumerate(
+        [(me3_result, me3_color, 'H3K27me3'), (ac_result, ac_color, 'H3K27ac')]
+    ):
+        ax_eps, ax_ms = axes[row, 0], axes[row, 1]
+
+        dens = np.asarray(result['densities'], dtype=float)
+        if len(dens) == 0:
+            continue
+        dens_smooth = np.linspace(dens.min(), dens.max(), 200)
+
+        eps = np.asarray(result['best_epsilons'], dtype=float)
+        eps_coef, eps_exp = result['eps_coef'], result['eps_exp']
+        ax_eps.scatter(dens, eps, color=color, label=f'R²={result["eps_r_squared"]:.3f}')
+        ax_eps.plot(dens_smooth, eps_coef * dens_smooth ** eps_exp, color=color, linestyle='--')
+        ax_eps.set_xlabel('Density [locs/nm²]')
+        ax_eps.set_ylabel('Epsilon [nm]')
+        ax_eps.set_title(f'{label} — Epsilon Calibration')
+
+        min_samples = np.asarray(result['best_min_samples'], dtype=float)
+        ms_slope, ms_intercept = result['min_samples_slope'], result['min_samples_intercept']
+        ax_ms.scatter(dens, min_samples, color=color, label=f'R²={result["min_samples_r_squared"]:.3f}')
+        ax_ms.plot(dens_smooth, ms_slope * dens_smooth + ms_intercept, color=color, linestyle='--')
+        ax_ms.set_xlabel('Density [locs/nm²]')
+        ax_ms.set_ylabel('min_samples')
+        ax_ms.set_title(f'{label} — min_samples Calibration')
+
+    for ax in axes.ravel():
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.suptitle(title)
     plt.tight_layout()
     plt.show()
