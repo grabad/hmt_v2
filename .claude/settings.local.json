@@ -4,7 +4,8 @@
       "Bash(py -c \"import json; nb=json.load\\(open\\('hmt_v3 test_script.ipynb'\\)\\); [print\\(f'=== Cell {i} ===\\\\n', ''.join\\(c['source']\\)[:800], '\\\\n'\\) for i,c in enumerate\\(nb['cells']\\) if 'inner' in ''.join\\(c['source']\\).lower\\(\\) or 'outer' in ''.join\\(c['source']\\).lower\\(\\) or \\('rdf' in ''.join\\(c['source']\\).lower\\(\\) and 'extract' in ''.join\\(c['source']\\).lower\\(\\)\\)]\")",
       "Bash(python -c ' *)",
       "Bash(xargs grep -liE \"simulat\")",
-      "Bash(xargs grep -liE \"nucleus|cluster\")"
+      "Bash(xargs grep -liE \"nucleus|cluster\")",
+      "PowerShell($nb = Get-Content -Raw \"manuscript_plotting.ipynb\" | ConvertFrom-Json; Write-Output \"Total cells: $\\($nb.cells.Count\\)\"; for \\($i=0; $i -lt $nb.cells.Count; $i++\\) { $c = $nb.cells[$i]; $src = \\($c.source -join ''\\); $preview = $src.Substring\\(0, [Math]::Min\\(80, $src.Length\\)\\) -replace \"`n\",\" \"; Write-Output \"[$i] \\($\\($c.cell_type\\)\\) $preview\" })"
     ]
   }
 }

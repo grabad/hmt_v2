@@ -10,18 +10,27 @@ from scipy.spatial import ConvexHull, cKDTree
 from scipy.spatial.qhull import QhullError
 from scipy.optimize import minimize_scalar
 
-def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
+def cluster_dbscan(loc_df, eps=50, min_samples=8, use_z=False, n_jobs=-1):
     """
     Cluster localization data using scikit-learn's DBSCAN algorithm, taking in epsilon and min_samples parameters.
     Clusters will be assigned a numeric ID and a random RGB color, with unclustered noise labeled as -1 and set gray.
+
+    Args:
+        loc_df:       DataFrame with [x [nm], y [nm]] (and [z [nm]] if use_z=True)
+        eps:          DBSCAN neighbourhood radius in nm
+        min_samples:  DBSCAN min_samples parameter
+        use_z:        if True, cluster in 3D (XYZ); if False (default), 2D (XY only) —
+                      must match whatever dimensionality eps/min_samples were chosen for
+        n_jobs:       forwarded to DBSCAN
 
     Returns:
         Pandas DataFrame: loc_df (with cluster_label and cluster_color columns)
     """
     loc_df = loc_df.copy()
 
-    loc_np = loc_df[["x [nm]", "y [nm]"]].to_numpy()
-    loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs).fit_predict(loc_np)    
+    cols = ["x [nm]", "y [nm]", "z [nm]"] if use_z else ["x [nm]", "y [nm]"]
+    loc_np = loc_df[cols].to_numpy()
+    loc_clust = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=n_jobs).fit_predict(loc_np)
     loc_df["cluster_label"] = loc_clust
     
     
@@ -41,6 +50,57 @@ def cluster_dbscan(loc_df, eps=50, min_samples=8, n_jobs=-1):
     loc_df["cluster_color"] = loc_colors
 
     return loc_df
+
+def cluster_dbscan_density_corrected(loc_df, calibration, area_nm2, use_z=False,
+                                     min_eps=10.0, min_min_samples=3, n_jobs=-1):
+    """
+    Cluster localization data with DBSCAN, using an (eps, min_samples) pair derived
+    from a density calibration instead of a single fixed value applied irrespective
+    of local labelling density. See simulate.optimize_dbscan_size_matching, which
+    fits eps = eps_coef * density^eps_exp and min_samples = min_samples_slope *
+    density + min_samples_intercept from simulated ground truth.
+
+    Computes loc_df's own localization density (len(loc_df) / area_nm2) and
+    evaluates those fits at that density, so the clustering parameters used here
+    scale with how densely THIS dataset happens to be labelled — unlike a fixed
+    ("arbitrary") eps/min_samples pair, which over- or under-merges nanodomains
+    as density varies and biases any downstream size measurement.
+
+    Args:
+        loc_df:           DataFrame with [x [nm], y [nm]] (and [z [nm]] if use_z=True)
+        calibration:       dict returned by simulate.optimize_dbscan_size_matching;
+                          must have converged (at least 2 fitted densities)
+        area_nm2:          imaged area in nm^2 used to compute loc_df's density —
+                          must be measured the same way as the calibration's
+                          calibration_area_nm2 (e.g. nucleus mask area, not a
+                          bounding box) for the density values to be comparable
+        use_z:             forwarded to cluster_dbscan; should match the use_z the
+                          calibration was fit with
+        min_eps:           floor on the corrected eps (nm), guards against
+                          extrapolating the power-law fit to an unusably small value
+        min_min_samples:   floor on the corrected min_samples
+        n_jobs:            forwarded to DBSCAN
+
+    Returns:
+        tuple: (clustered_df, params) where params is a dict with the 'density'
+               loc_df was measured at and the 'eps' / 'min_samples' DBSCAN used
+    """
+    if len(calibration.get('densities', [])) < 2:
+        raise ValueError(
+            "calibration did not converge (fewer than 2 fitted densities); "
+            "its eps/min_samples fits are not usable.")
+
+    density = len(loc_df) / area_nm2
+
+    eps = calibration['eps_coef'] * density ** calibration['eps_exp']
+    min_samples = calibration['min_samples_slope'] * density + calibration['min_samples_intercept']
+
+    eps = max(eps, min_eps)
+    min_samples = max(round(min_samples), min_min_samples)
+
+    clustered_df = cluster_dbscan(loc_df, eps=eps, min_samples=min_samples, use_z=use_z, n_jobs=n_jobs)
+    params = {'density': density, 'eps': eps, 'min_samples': min_samples}
+    return clustered_df, params
 
 def calc_nanodomain_size(locs):
     """

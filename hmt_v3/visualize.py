@@ -463,3 +463,62 @@ def plot_dbscan_calibration(me3_result, ac_result, title='DBSCAN Calibration: H3
     plt.suptitle(title)
     plt.tight_layout()
     plt.show()
+
+
+def plot_size_vs_density(density_fractions, arbitrary_sizes, corrected_sizes, true_diameter_nm,
+                         arbitrary_color='#6B8FD6', corrected_color='#F5A623',
+                         title='Measured Nanodomain Size vs. Localization Density', text_loc=(0.2, 0.15)):
+    """
+    Line plot of a single simulated nanodomain's measured size (geometric_2D
+    diameter) across a labelling-density gradient, comparing DBSCAN clustered
+    with a fixed ("arbitrary") eps/min_samples pair against DBSCAN clustered with
+    density-corrected eps/min_samples (cluster.cluster_dbscan_density_corrected).
+
+    A horizontal dashed line marks the domain's true diameter — known exactly,
+    since simulate.simulate_single_domain_scene generates a single isolated
+    domain rather than a dense field of possibly-overlapping ones. The closer a
+    curve tracks that line across density, the less its size measurement is
+    biased by how densely the sample happened to be labelled; an "arbitrary"
+    curve that drifts away from the true line as density drops (while the
+    corrected curve stays flat) is the artifact density correction exists to fix.
+
+    Color here encodes the arbitrary/corrected condition directly (rather than a
+    mark identity, as plot_dbscan_calibration's me3/ac colors do) since that
+    condition is the entity being compared in this figure.
+
+    Args:
+        density_fractions: x-values, the labelling-density fraction (1.0 = full
+                           density) each point was subsampled to
+        arbitrary_sizes:    measured diameter (nm) at each fraction using fixed
+                           eps/min_samples
+        corrected_sizes:    measured diameter (nm) at each fraction using
+                           density-corrected eps/min_samples
+        true_diameter_nm:   the domain's known true diameter (nm)
+        arbitrary_color:    line color for the arbitrary-params series
+        corrected_color:    line color for the density-corrected-params series
+        title:              figure title
+    """
+    fig, ax = plt.subplots(figsize=(6.5, 4.8))
+
+    ax.axhline(true_diameter_nm, color='0.3', linestyle=':', linewidth=2,
+               label=f'True diameter ({true_diameter_nm:.0f} nm)')
+
+    ax.plot(density_fractions, arbitrary_sizes, 'o-', color=arbitrary_color,
+            label='Arbitrary params')
+    ax.plot(density_fractions, corrected_sizes, 's-', color=corrected_color,
+            label='Density-corrected params')
+
+    ax.set_xlabel('Localization density fraction')
+    ax.set_ylabel('Measured diameter [nm]')
+    ax.set_title(title)
+    ax.legend(loc='lower right', fontsize=12)
+    ax.grid(True, alpha=0.3)
+
+    if any(np.isnan(s) for s in arbitrary_sizes) or any(np.isnan(s) for s in corrected_sizes):
+        text_loc_x = text_loc[0]
+        text_loc_y = text_loc[1]
+        ax.text(text_loc_x, text_loc_y, 'Failed to\nidentify nanodomain', transform=ax.transAxes,
+                ha='center', va='bottom', color='red', fontsize=16)
+
+    plt.tight_layout()
+    plt.show()

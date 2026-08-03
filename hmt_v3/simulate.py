@@ -1484,6 +1484,82 @@ def optimize_dbscan_size_matching(fraction_dfs, calibration_area_nm2, gt_target=
     return result
 
 
+def simulate_single_domain_scene(domain_diameter_nm=150.0, n_domain_locs=300,
+                                 noise_density=5e-6, scene_size_nm=2000.0,
+                                 z_extent_nm=200.0, rng=None):
+    """
+    Generates ONE synthetic nanodomain (a uniform-density 3D ball of
+    localizations) embedded in uniform background noise across a square scene.
+
+    generate_nucleus's dense field of many, possibly-overlapping domains has no
+    unambiguous per-domain ground truth once domains merge (see
+    optimize_dbscan_size_matching's docstring). A single isolated domain sidesteps
+    that: there is exactly one true cluster, so its size is known exactly and any
+    DBSCAN result can be checked against it directly, rather than only against a
+    population-mean target.
+
+    The domain's true diameter is measured with the same statistic
+    calculate_geometric_gt_target / domain_size_cost use elsewhere (2x the 75th
+    percentile of xy point-to-centroid distance), so it's directly comparable to
+    whatever DBSCAN's predicted cluster sizes turn out to be, regardless of
+    exactly how domain_diameter_nm maps to the sampled point cloud.
+
+    Args:
+        domain_diameter_nm: approximate diameter (nm) of the domain's sampling
+                            ball; the actual measured true diameter (returned)
+                            will be close to but not exactly this value
+        n_domain_locs:      number of localizations in the domain at full
+                            (density_fraction=1.0) density
+        noise_density:      background noise localization density (locs/nm²) at
+                            full density, applied over the whole scene area
+        scene_size_nm:      side length (nm) of the square scene; the domain is
+                            centered in it
+        z_extent_nm:        full z-thickness (nm) of the scene; noise fills this
+                            range uniformly, matching the domain's own z-extent
+        rng:                np.random.Generator; a fresh default_rng() if None
+
+    Returns:
+        tuple: (scene_df, true_diameter_nm, scene_area_nm2)
+            scene_df:         DataFrame [x [nm], y [nm], z [nm], true_label]
+                              (true_label 1 = domain, 0 = background noise)
+            true_diameter_nm: the domain's measured geometric_2D diameter (nm)
+            scene_area_nm2:   scene_size_nm ** 2, for computing localization
+                              density consistently with the rest of this module
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # --- domain: uniform points within a 3D ball (r ~ U^(1/3) for uniform volume density) ---
+    domain_radius = domain_diameter_nm / 2.0
+    directions = rng.normal(size=(n_domain_locs, 3))
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    radii = domain_radius * rng.random(n_domain_locs) ** (1.0 / 3.0)
+    domain_offsets = directions * radii[:, None]
+
+    center = np.array([scene_size_nm / 2.0, scene_size_nm / 2.0, z_extent_nm / 2.0])
+    domain_xyz = center + domain_offsets
+
+    # --- background noise: uniform over the whole scene ---
+    n_noise_locs = int(round(noise_density * scene_size_nm ** 2))
+    noise_xyz = rng.random((n_noise_locs, 3)) * [scene_size_nm, scene_size_nm, z_extent_nm]
+
+    scene_df = pd.DataFrame(
+        np.vstack([domain_xyz, noise_xyz]),
+        columns=["x [nm]", "y [nm]", "z [nm]"]
+    )
+    scene_df["true_label"] = np.concatenate([
+        np.ones(n_domain_locs, dtype=int),
+        np.zeros(n_noise_locs, dtype=int),
+    ])
+
+    domain_only = scene_df[scene_df["true_label"] == 1].copy()
+    domain_only["cluster_label"] = 0
+    true_diameter_nm = calculate_geometric_gt_target(domain_only, min_points=1, percentile=75.0)
+
+    scene_area_nm2 = scene_size_nm ** 2
+    return scene_df, true_diameter_nm, scene_area_nm2
+
+
 def measure_seed_spacing(df, eps=100.0, min_samples=8, use_z=False):
     """
     Measures the inter-domain spatial arrangement from real localizations.
