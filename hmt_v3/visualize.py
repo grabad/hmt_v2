@@ -504,9 +504,9 @@ def plot_size_vs_density(density_fractions, arbitrary_sizes, corrected_sizes, tr
                label=f'True diameter ({true_diameter_nm:.0f} nm)')
 
     ax.plot(density_fractions, arbitrary_sizes, 'o-', color=arbitrary_color,
-            label='Arbitrary params')
+            label='Constant parameters')
     ax.plot(density_fractions, corrected_sizes, 's-', color=corrected_color,
-            label='Density-corrected params')
+            label='Density-corrected parameters')
 
     ax.set_xlabel('Localization density fraction')
     ax.set_ylabel('Measured diameter [nm]')
