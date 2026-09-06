@@ -1,0 +1,97 @@
+Package: hmt_v3/srev/
+Accessible as hmt_v3.srev.io, hmt_v3.srev.labeling, etc. Wired into hmt_v3/__init__.py.
+
+io.py
+parse_config_txt(path, length_unit_to_nm=1.0) — 2-line header (count, "Timestep: N"), last 3 tokens per line as x/y/z, leading tokens as type_0, type_1, …. Gzip-transparent. Validates row count vs. declared count.
+parse_srev_folder_name(name) — parses SRRW-MARCELO-L=130-N=186741-phi=0.08-alpha=1.2-bmax=20-r=0.49-ru=10. Returns length_unit_to_nm = ru (not r*ru).
+parse_copy_parameters_txt(path) — 8-line numeric file: N, L, alpha, r, bmax, param_6, ru, param_8. param_6=0.1 and param_8=150.0 are constant across all files checked; deliberately given generic names since their meaning isn't confirmed (param_8 is plausibly Umax, unverified).
+resolve_srev_run_params(config_path, rtol=1e-3) — prefers copy-parameters.txt over folder name, cross-checks shared fields, raises on disagreement. Returns a dict missing length_unit_to_nm (does not raise) when neither source is available.
+labeling.py
+LabelingConfig — labeling_efficiency=0.25, linker lengths/jitters, n_secondary_per_primary, n_dye_per_secondary=("poisson", 3.0), exclusion_radius_nm=5.0, max_resample_rounds=6, max_count_per_parent=8.
+Uniform sphere sampling via normalized Gaussians (fixes legacy pole bias).
+_place_with_steric_rejection — batched-wave cKDTree, O(N log N). Includes a cumulative accepted_so_far tree so candidates accepted in different retry rounds are checked against each other.
+place_primaries / place_secondaries / place_fluorophores / label_monomers. Requested vs. realized counts recorded per parent.
+photophysics.py
+PhotophysicsConfig — k_on_per_ms=1e-5, k_off_per_ms=0.02, k_bleach_per_ms=5e-4, frame_time_ms=10.0, mean_photons_per_frame=300.0, n_frames=10000.
+simulate_blinking — 3-state Markov (Off/On/Bleached), vectorized per frame, compact event log (never an n_frames × n_emitters array). Competing On→{Off,Bleach} handled via p_leave_on = 1-exp(-(k_off+k_bleach)·dt) and p_bleach_given_leave = k_bleach/(k_off+k_bleach).
+Outputs expected photon rate, not a noised count — Poisson applied once, at the camera.
+render.py
+RenderConfig — astigmatic Gaussian matching ThunderSTORM's Astigmatism3D form; sigma0_nm=150, focal_offset_nm=250, depth_scale_nm=400.
+CameraConfig — field names match ThunderSTORM's camera dialog 1:1.
+fit_frame_to_points(x_nm, y_nm, pixel_size_nm, margin_nm=300) — added this session; was referenced in CameraConfig's docstring but never implemented. Returns (frame_shape, x_offset_nm, y_offset_nm).
+_pixel_integrated_gaussian (erf-based, reused by domains.py), render_photon_frame, apply_camera_noise (real ADU space: QE → Poisson → Gamma EM-gain → read noise → ADU → clip), expand_active_frames, render_stack_to_tiff (BigTIFF, streamed per frame).
+compartments.py
+compute_coordination_number(monomers_df, coordination_radius_nm=11.5).
+classify_compartments(..., heterochromatin_cn_threshold=6) — CN ≥ 6 = heterochromatin. Threshold of 6 is the midpoint of the paper's 0–12 range, not an established biological cutoff.
+Verified on config-1.txt: CN spans exactly 0–12; 94941 het / 91801 eu.
+domains.py
+render_2d_density, find_domain_centers, radial_density_profile, domain_radius_from_profile, identify_packing_domains.
+CLAHE masking fix (this session) — see below.
+Current defaults: pixel_size_nm=2.0, bead_sigma_nm=4.9, min_distance_nm=30.0, r_max_nm=300.0, dr_nm=10.0.
+ground_truth.py
+resolved_localizations_gt, save_run (Parquet + run_config.json), load_run, check_referential_integrity.
+run_config.json structure: {"config": {...}, ...extra_metadata} — config is nested one level down.
+pipeline.py (new this session)
+SrEvSimConfig — nests LabelingConfig/PhotophysicsConfig/CameraConfig/RenderConfig, plus compartment_filter, coordination_radius_nm, heterochromatin_cn_threshold, frame_margin_nm, seed. n_frames lives only on photophysics and is used for both blinking length and TIFF frame count.
+select_labeling_targets — uses an existing compartment column if present rather than recomputing.
+simulate_channel — compartment filter → labeling → photophysics. Re-densifies monomer_id after filtering.
+run_pipeline — auto-sizes frame via fit_frame_to_points, shifts all coordinate tables by the same offset, renders + writes TIFF, checks referential integrity, saves ground truth with coordinate_offset_nm and frame_shape in metadata.
+One channel per call by design; two-channel = two calls with different compartment_filter.
+Bugs Found and Fixed
+Cross-round steric collision — candidates accepted in different retry rounds weren't compared. Min NN distance was 0.18 nm vs. configured 5.0 nm. Fixed with cumulative accepted_so_far tree; now 5.000041 nm.
+Wrong coordinate scale (4.9 vs 10) — present in both the draft code and legacy MATLAB. Verified by nearest-neighbor spacing (9.98–10.23 nm under ×10, matching the paper's 9.8 nm bead diameter).
+k-means compartment classification — replaced entirely with coordination number.
+CLAHE manufacturing spurious domains — the largest finding. CLAHE does local contrast stretching per tile; real ChromSTEM tomograms have continuously-varying non-zero density, but the simulated bead-density image has genuine near-zero void regions between domains, where CLAHE stretched floating-point noise into "peaks." On config-1.txt: 46 peaks with CLAHE vs. 13 without; median raw pre-CLAHE density at CLAHE-found peaks was exactly 0; half had zero real monomers within 20 nm. Their radial profiles start at ~0 and only rise on reaching a neighboring real domain — the cause of 45% of all radii being pegged at the r_max_nm=300 ceiling. Fix: find_domain_centers now zeroes the enhanced image outside an Otsu-thresholded occupied mask computed on the pre-CLAHE normalized density.
+min_distance_nm recalibration — the old 110 nm was tuned against counts inflated by the CLAHE bug. Now 30 nm.
+Notebook cache was all-or-nothing — if both CSVs existed it skipped the loop entirely, ignoring newly-added files. Now keyed by config_name, computing only missing configs and appending.
+pandas object-dtype poisoning — pd.DataFrame([], columns=...) gives object dtype; concatenating with float64 cached data upcast the merged column, which crashes gaussian_kde inside violinplot with 'float' object has no attribute 'shape' (because np.object_(x) returns a bare Python float with no .shape). Fixed with explicit .astype() on every frame plus defensive pd.to_numeric in the plot helper.
+resolve_srev_run_params doesn't raise on missing params — the demo notebook's try/except was catching the wrong thing; now uses .get(..., 10.0).
+Docstring mischaracterization — domains.py claimed implementing only criterion (3) was a shortcut. It is what Cangnano et al. themselves do for SR-EV data. Corrected.
+Calibration Results (post-fix, hmt_v1/Simulation/config-1.txt)
+Metric	Value	Paper reference
+Domain count	41 over 2.327 µm² = 17.6 domains/µm²	Li et al.: 17.5/µm²
+Median radius	85 nm	A549 median Rf: 74 nm
+Mean radius	107 nm	A549 mean Rf: 80.6 nm
+Ceiling-pegged radii	2.4%	(was 45% pre-fix)
+Min monomers within 20 nm of a center	36	(was 0 for half of them pre-fix)
+Pre-fix values for contrast: 46 domains, mean radius 225 nm, median 260 nm, 45% at ceiling.
+
+Data
+sr-ev_raw/ — 6092 config-N.txt.gz files across 7 (alpha, phi) combinations, 18 GB. Gitignored. Sourced from \\foilserver_2\SMLM_EB53\Ben\Ben Paper\histone\sim_chromatin2.
+.txt.gz storage confirmed correct (4–6× compression; gitignored so no repo bloat; parse_config_txt reads it transparently).
+Conditions present: alpha ∈ {1.10, 1.15, 1.20} × phi ∈ {0.08, 0.12, 0.16}, 1000 configs each, except (1.20, 0.12) which has 92.
+Notebooks
+sr_ev_domain_analysis.ipynb
+Batch domain identification across all (alpha, phi) conditions with incremental CSV caching, summary table, and Figure 7A-style violin plots grouped by alpha (color/block) then phi (x position). Violin styling: smooth bodies with black edges, min/max whiskers, dashed mean line, solid median line, legend distinguishing mean vs. median.
+
+Note: domain count is per single 100 nm z-slice taken at the median z of each config — one image per config, not summed over the volume. Not normalized to a fixed µm² area.
+
+sr_ev_pipeline_demo.ipynb
+Loads a config, classifies compartments on the full cloud, crops to a 6000-monomer patch, configures two channels (het/eu with different brightness and seeds), runs run_pipeline twice, shows max-intensity projections, inspects resolved_localizations_gt. Executed via nbconvert with outputs saved inline.
+
+Environment
+Added to environment.yml: scikit-image=0.26.0, tifffile=2026.3.3, pyarrow=23.0.1.
+
+Note for running Python from the Bash/PowerShell tools: import numpy crashes with exit 127 unless the conda env's DLL directories are prepended to PATH:
+
+
+C:\Users\grabadiFOIL\anaconda3\envs\hmt_smlm;...\Library\mingw-w64\bin;...\Library\usr\bin;...\Library\bin;...\Scripts
+Verification Completed
+Full smoke test: parse → compartments → labeling → photophysics → render → TIFF → ground truth. All assertions passed (steric exclusion exactly 5.000 nm; photon budget recovered to 1000.00; EM-gain variance 4.29 → 1178.64 ADU; TIFF shape/dtype round-trip; referential integrity; Parquet round-trip).
+Pipeline orchestrator test: both channels, error path for invalid compartment_filter, run_config.json round-trip, TIFF round-trip.
+Demo notebook executed end-to-end via nbconvert.
+Outstanding Tasks
+ThunderSTORM acceptance test (manual) — open a stack.tif in ImageJ/Fiji, run real detection + fitting, nearest-neighbor-match output against resolved_localizations_gt in (x, y, frame) for a detection-rate / localization-error number. This is the actual acceptance test for the module's stated purpose and has never been run.
+No automated test suite — all verification to date has been ad-hoc scratch scripts, nothing checked in as reusable regression tests.
+Remaining 2.4% ceiling-pegged radii — large domains whose profiles genuinely don't turn over within r_max_nm=300. Would need a wider r_max_nm or implementation of the mass-scaling / local-D=3 criteria.
+Nothing committed to git — the entire hmt_v3/srev/ package, both notebooks, reference_manuscripts/, and the environment.yml changes are all untracked/uncommitted.
+README note for sr-ev_raw/ provenance — dataset is gitignored and not reproducible from the repo alone; the network share path should be documented somewhere.
+Outstanding Questions
+heterochromatin_cn_threshold=6 — chosen as the midpoint of the 0–12 range and because the paper describes CN≈6 as characteristic of a domain's periphery. Needs calibration against real per-mark labeling density data.
+bead_sigma_nm=4.9 — neither paper gives an exact value for the per-bead Gaussian width used to build the density image. Currently uses r° as a physically-motivated stand-in.
+copy-parameters.txt param_6=0.1 and param_8=150.0 — meanings unconfirmed. param_8 is plausibly Umax (Appendix 3 describes it only symbolically), unverified.
+L=130 in folder names — constant across every run inspected, regardless of N/phi/alpha. Meaning in the generator not established.
+bmax=20 — present in the naming convention; meaning not established from available documentation.
+Physical scale of a rendered frame — a single SR-EV config spans only ~1.3–1.5 µm (Rc = 650 nm confinement), so at a realistic 100 nm/px camera pixel a whole config fills only ~15×15 px. Whether to render at finer pixel size, tile multiple configs into a realistic FOV, or accept the small scale is undecided.
+min_distance_nm=30 — calibrated against a single config (config-1.txt, φ=0.08). Whether it holds across the other six (alpha, phi) conditions hasn't been checked.
+Domain-count comparability across conditions — raw n_domains isn't normalized by slab area, and each config's slab image is sized to its own monomer extent. Fine if extents are similar (they should be, with Rc fixed), but unverified.
