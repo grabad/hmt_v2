@@ -96,10 +96,18 @@ def _place_with_steric_rejection(anchor_xyz, parent_id, sample_length_fn, exclus
     has already repeated each parent's anchor position once per
     REQUESTED child), and accepts/rejects the whole wave against:
       - each static `reference_trees` entry (already-placed structure
-        this wave must not clash with), via `tree.query(candidates, k=1)`
+        this wave must not clash with), EXCLUDING the candidate's own
+        anchor -- a molecule does not sterically clash with the parent it
+        is bound or conjugated to, and testing it against one makes any
+        linker shorter than exclusion_radius unsatisfiable (see the
+        comment in the loop)
       - every other candidate in the same wave, via
         `cKDTree(candidates).query_pairs(exclusion_radius)` and a greedy
         keep-first thinning pass
+
+    So the guarantee this provides is: no two placed points are closer
+    than exclusion_radius, EXCEPT a child and its own parent, whose
+    separation is the sampled linker length by construction.
 
     Only the rejected subset is redrawn (fresh direction + length) each
     round, so the pending set shrinks geometrically and total cost stays
@@ -154,9 +162,32 @@ def _place_with_steric_rejection(anchor_xyz, parent_id, sample_length_fn, exclus
 
         ok = np.ones(len(pending), dtype=bool)
         for tree in reference_trees:
-            if tree is not None and tree.n > 0:
-                dist, _ = tree.query(candidates, k=1)
-                ok &= dist >= exclusion_radius
+            if tree is None or tree.n == 0:
+                continue
+            # k=2 so a hit on the candidate's OWN anchor can be skipped in favour
+            # of the next-nearest real neighbour. The anchor is the parent this
+            # candidate is attached to -- the epitope a primary binds, or the
+            # antibody a dye is conjugated to -- and a molecule cannot sterically
+            # clash with the thing it is bound to. Testing against it makes any
+            # linker shorter than exclusion_radius impossible to satisfy: with
+            # the 3 nm dye offset and a 5 nm exclusion radius, every dye at its
+            # intended distance was rejected, so only draws from the >5 nm tail
+            # survived. That silently discarded ~80% of requested dyes AND
+            # inflated the realized offset to the exclusion radius (measured:
+            # 5.39 nm realized vs 3.0 configured, 0.35 dyes per secondary vs a
+            # requested Poisson mean of 3.0).
+            k = min(2, tree.n)
+            dist, nn = tree.query(candidates, k=k)
+            dist = np.reshape(dist, (len(candidates), k))
+            nn = np.reshape(nn, (len(candidates), k))
+            # The anchor is a point of this tree at exactly the parent's stored
+            # coordinates, so an exact-zero separation identifies it.
+            is_own_parent = np.linalg.norm(tree.data[nn[:, 0]] - cur_anchor, axis=1) < 1e-9
+            if k > 1:
+                nearest = np.where(is_own_parent, dist[:, 1], dist[:, 0])
+            else:
+                nearest = np.where(is_own_parent, np.inf, dist[:, 0])
+            ok &= nearest >= exclusion_radius
 
         if len(accepted_so_far) > 0:
             prev_tree = cKDTree(accepted_so_far)

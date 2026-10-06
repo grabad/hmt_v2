@@ -261,6 +261,153 @@ def self_nonself_contact_ratio(me3_centroids, ac_centroids, field_size_nm, r_max
     }
 
 
+def nanodomain_sncr(ref_points, self_points, nonself_points, radii, exclude_ref=False):
+    """
+    Self:nonself contact ratio (SNCR) around each nanodomain of a real nucleus, as
+    defined in the manuscript (Fig. 3d-f): for every reference nanodomain, count
+    same-mark ("self") and other-mark ("nonself") neighbours within a disk of
+    radius r, and trace the ratio as r grows.
+
+    Unlike self_nonself_contact_ratio (a toy square field with border exclusion),
+    this needs no field geometry: neighbours outside the nucleus don't exist for
+    either mark, so a disk that crosses the nuclear edge loses self and nonself
+    counts alike and the RATIO is not biased by the edge to first order. Every
+    reference point is therefore kept at every r.
+
+    What counts as a "neighbour" is the caller's choice of self_points /
+    nonself_points:
+      * nanodomain centroids (Fig. 3d/e illustration): pass the reference
+        channel's own centroids as self_points with exclude_ref=True, so the
+        reference domain doesn't count itself.
+      * localizations (Methods text): pass the two channels' localizations;
+        leave exclude_ref=False -- the reference domain's own localizations are
+        genuine self contacts at small r (this is what drives the large small-r
+        values in Fig. 3f).
+
+    Two summaries are returned, because they answer slightly different questions:
+      mean_ratio:   mean over reference domains of each domain's own self/nonself
+                    ratio -- the manuscript's "average SNCR for each nanodomain".
+                    Domains with zero nonself neighbours at r have an undefined
+                    ratio and are left out of that r's mean, so the set of
+                    domains averaged changes with r (frac_no_nonself reports how
+                    many were left out); interpret small r with that in mind.
+      pooled_ratio: sum(self counts) / sum(nonself counts) over all reference
+                    domains -- every domain contributes at every r, so it is not
+                    subject to that changing-membership drift (see
+                    self_nonself_contact_ratio's docstring).
+    chance_ratio is the whole-nucleus self/nonself abundance ratio, the value
+    pooled_ratio tends to at large r with no spatial structure; divide by it for
+    an abundance-independent curve (1 = random mixing).
+
+    Args:
+        ref_points:     (N_ref, d) reference nanodomain centroids, d = 2 or 3
+        self_points:    (N_self, d) same-mark neighbour positions
+        nonself_points: (N_nonself, d) other-mark neighbour positions
+        radii:          1D array of disk radii (nm)
+        exclude_ref:    subtract 1 from every self count, for when ref_points are
+                        themselves included in self_points (centroid mode)
+
+    Returns:
+        dict with keys:
+            'r':               (M,) radii
+            'mean_ratio':      (M,) mean per-domain self/nonself ratio
+            'pooled_ratio':    (M,) summed-count ratio
+            'chance_ratio':    scalar abundance ratio
+            'mean_self', 'mean_nonself': (M,) mean neighbour counts per domain
+            'frac_no_nonself': (M,) fraction of domains with no nonself neighbour
+            'n_ref':           number of reference domains
+    """
+    ref = np.asarray(ref_points, dtype=float)
+    self_pts = np.asarray(self_points, dtype=float)
+    nonself_pts = np.asarray(nonself_points, dtype=float)
+    radii = np.asarray(radii, dtype=float)
+    n_r = len(radii)
+
+    out = {
+        'r': radii, 'mean_ratio': np.full(n_r, np.nan), 'pooled_ratio': np.full(n_r, np.nan),
+        'mean_self': np.full(n_r, np.nan), 'mean_nonself': np.full(n_r, np.nan),
+        'frac_no_nonself': np.full(n_r, np.nan), 'n_ref': len(ref),
+        'chance_ratio': ((len(self_pts) - (1 if exclude_ref else 0)) / len(nonself_pts)
+                         if len(nonself_pts) else np.nan),
+    }
+    if len(ref) == 0 or len(self_pts) == 0 or len(nonself_pts) == 0:
+        return out
+
+    tree_self = cKDTree(self_pts)
+    tree_nonself = cKDTree(nonself_pts)
+    offset = 1.0 if exclude_ref else 0.0
+
+    for i, r in enumerate(radii):
+        n_self = np.asarray(tree_self.query_ball_point(ref, r, return_length=True), dtype=float) - offset
+        n_nonself = np.asarray(tree_nonself.query_ball_point(ref, r, return_length=True), dtype=float)
+
+        has_nonself = n_nonself > 0
+        if np.any(has_nonself):
+            out['mean_ratio'][i] = float(np.mean(n_self[has_nonself] / n_nonself[has_nonself]))
+        total_nonself = n_nonself.sum()
+        if total_nonself > 0:
+            out['pooled_ratio'][i] = float(n_self.sum() / total_nonself)
+        out['mean_self'][i] = float(n_self.mean())
+        out['mean_nonself'][i] = float(n_nonself.mean())
+        out['frac_no_nonself'][i] = float(np.mean(~has_nonself))
+
+    return out
+
+
+def fit_exponential_decay(r, y, r_max=None, from_peak=True):
+    """
+    Fits y(r) = A * exp(k * r) + C to an SNCR curve and returns the decay rate k
+    (1/nm; negative = decaying) -- the per-cell statistic of Fig. S3b/c. k does not
+    depend on the curve's overall scale, so it is the same whether the curve is
+    raw or normalized to its first value.
+
+    Localization-based SNCR curves typically RISE over the first few tens of nm
+    (a disk smaller than the domain hasn't reached many neighbours of either kind
+    yet) before decaying (Fig. 3f); fitting a decay through that rise pins k at
+    its bound. from_peak=True fits only from the curve's maximum outward.
+
+    Args:
+        r:         1D radii (nm)
+        y:         1D curve values; NaNs are dropped
+        r_max:     only fit r <= r_max (None = all)
+        from_peak: only fit r >= the radius of the curve's maximum
+
+    Returns:
+        dict with 'k', 'A', 'C', 'r_squared' (all NaN if the fit fails or there
+        are fewer than 4 finite points)
+    """
+    from scipy.optimize import curve_fit
+
+    r = np.asarray(r, dtype=float)
+    y = np.asarray(y, dtype=float)
+    keep = np.isfinite(y)
+    if r_max is not None:
+        keep &= r <= r_max
+    r, y = r[keep], y[keep]
+    if from_peak and len(y):
+        peak = int(np.argmax(y))
+        r, y = r[peak:], y[peak:]
+    nan = {'k': np.nan, 'A': np.nan, 'C': np.nan, 'r_squared': np.nan}
+    if len(r) < 4:
+        return nan
+
+    def model(rr, A, k, C):
+        return A * np.exp(k * rr) + C
+
+    span = max(float(np.ptp(r)), 1.0)
+    p0 = (float(y[0] - y[-1]), -3.0 / span, float(y[-1]))
+    try:
+        popt, _ = curve_fit(model, r, y, p0=p0, bounds=([-np.inf, -1.0, -np.inf], [np.inf, 0.0, np.inf]),
+                            maxfev=20000)
+    except (RuntimeError, ValueError):
+        return nan
+
+    resid = y - model(r, *popt)
+    ss_tot = np.sum((y - y.mean()) ** 2)
+    r_squared = 1.0 - np.sum(resid ** 2) / ss_tot if ss_tot > 0 else np.nan
+    return {'k': float(popt[1]), 'A': float(popt[0]), 'C': float(popt[2]), 'r_squared': float(r_squared)}
+
+
 def ripleys_k_cross(centroids_a, centroids_b, field_size_nm, r_max=800.0, dr=25.0):
     """
     Bivariate (cross-type) Ripley's K function K_ab(r): for a reference point

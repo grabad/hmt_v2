@@ -127,6 +127,23 @@ def astigmatic_sigma_nm(z_nm, config):
     return sigma_x, sigma_y
 
 
+def _pixel_integrated_axis_profile(pix_coords, center_px, sigma_px):
+    """
+    1D Gaussian centered at center_px integrated over each listed pixel's
+    [i-0.5, i+0.5) extent (erf-difference form). One axis of the separable
+    2D PSF -- shared by the spatial PSF below and by the first-order
+    renderer in spectral.py, which convolves this x-profile with a dye's
+    dispersed emission spectrum.
+    """
+    sigma_px = max(sigma_px, 1e-3)
+    edges_lo = pix_coords - 0.5
+    edges_hi = pix_coords + 0.5
+    return 0.5 * (
+        erf((edges_hi - center_px) / (np.sqrt(2) * sigma_px))
+        - erf((edges_lo - center_px) / (np.sqrt(2) * sigma_px))
+    )
+
+
 def _pixel_integrated_gaussian(cx_px, cy_px, sigma_x_px, sigma_y_px, half_window_px):
     """
     A local (2*half_window_px+1)^2 patch of a 2D Gaussian integrated over
@@ -146,19 +163,27 @@ def _pixel_integrated_gaussian(cx_px, cy_px, sigma_x_px, sigma_y_px, half_window
     xs = np.arange(x0, x0 + 2 * half_window_px + 1, dtype=float)
     ys = np.arange(y0, y0 + 2 * half_window_px + 1, dtype=float)
 
-    def _axis_profile(pix_coords, center, sigma):
-        sigma = max(sigma, 1e-3)
-        edges_lo = pix_coords - 0.5
-        edges_hi = pix_coords + 0.5
-        return 0.5 * (
-            erf((edges_hi - center) / (np.sqrt(2) * sigma))
-            - erf((edges_lo - center) / (np.sqrt(2) * sigma))
-        )
-
-    profile_x = _axis_profile(xs, cx_px, sigma_x_px)
-    profile_y = _axis_profile(ys, cy_px, sigma_y_px)
+    profile_x = _pixel_integrated_axis_profile(xs, cx_px, sigma_x_px)
+    profile_y = _pixel_integrated_axis_profile(ys, cy_px, sigma_y_px)
     patch = np.outer(profile_y, profile_x)
     return y0, x0, patch
+
+
+def _add_patch(buf, y0, x0, patch):
+    """
+    Adds `patch` into `buf` with its top-left corner at (y0, x0), clipping
+    whatever part of the patch falls outside the frame (an emitter whose
+    whole window lies outside contributes nothing). In place.
+    """
+    H, W = buf.shape
+    y1, x1 = y0 + patch.shape[0], x0 + patch.shape[1]
+    cy0, cy1 = max(y0, 0), min(y1, H)
+    cx0, cx1 = max(x0, 0), min(x1, W)
+    if cy0 >= cy1 or cx0 >= cx1:
+        return
+    py0, py1 = cy0 - y0, patch.shape[0] - (y1 - cy1)
+    px0, px1 = cx0 - x0, patch.shape[1] - (x1 - cx1)
+    buf[cy0:cy1, cx0:cx1] += patch[py0:py1, px0:px1]
 
 
 def render_photon_frame(x_nm, y_nm, z_nm, photons, frame_shape, camera_config, render_config):
@@ -197,16 +222,7 @@ def render_photon_frame(x_nm, y_nm, z_nm, photons, frame_shape, camera_config, r
         y0, x0, patch = _pixel_integrated_gaussian(
             cx_px[i], cy_px[i], sigma_x_px[i], sigma_y_px[i], half_window
         )
-        y1, x1 = y0 + patch.shape[0], x0 + patch.shape[1]
-
-        cy0, cy1 = max(y0, 0), min(y1, H)
-        cx0, cx1 = max(x0, 0), min(x1, W)
-        if cy0 >= cy1 or cx0 >= cx1:
-            continue  # emitter's whole window falls outside the frame
-
-        py0, py1 = cy0 - y0, patch.shape[0] - (y1 - cy1)
-        px0, px1 = cx0 - x0, patch.shape[1] - (x1 - cx1)
-        buf[cy0:cy1, cx0:cx1] += patch[py0:py1, px0:px1] * photons[i]
+        _add_patch(buf, y0, x0, patch * photons[i])
 
     return buf
 
@@ -227,7 +243,7 @@ def apply_camera_noise(photon_img, camera_config, rng):
                        EMCCD/sCMOS read noise is injected at the output
                        amplifier, post-gain-register
       5. ADU = N_out_e / e_per_adu + base_level_adu, clipped to
-         [0, bit_depth_max_adu] and quantized to uint16
+         [0, bit_depth_max_adu] and rounded to the nearest uint16
 
     Args:
         photon_img:    (H, W) expected photons per pixel (signal only;
@@ -252,10 +268,12 @@ def apply_camera_noise(photon_img, camera_config, rng):
 
     adu = n_out_e / camera_config.e_per_adu + camera_config.base_level_adu
     adu = np.clip(adu, 0, camera_config.bit_depth_max_adu)
-    return adu.astype(np.uint16)
+    # round, not truncate: a plain astype() floors every pixel, which sits the
+    # whole stack 0.5 ADU below the declared base_level_adu
+    return np.rint(adu).astype(np.uint16)
 
 
-def expand_active_frames(fluorophores_df, blink_events_df):
+def expand_active_frames(fluorophores_df, blink_events_df, extra_columns=()):
     """
     Explodes blink_events (frame_start/frame_end/total_photons/n_frames_on,
     one row per blink) into one row per (frame, fluorophore) for every
@@ -266,11 +284,15 @@ def expand_active_frames(fluorophores_df, blink_events_df):
     Args:
         fluorophores_df: output of labeling.place_fluorophores
         blink_events_df: output of photophysics.simulate_blinking
+        extra_columns:   further fluorophores_df columns to carry through
+                         per active row (e.g. "dye" / "spectral_shift_nm"
+                         for spectral.render_dual_stack_to_tiff)
 
     Returns:
         DataFrame: frame, fluorophore_id, blink_id, photon_rate (constant
                    per-frame photon count for that blink, i.e.
-                   total_photons / n_frames_on), x/y/z [nm]
+                   total_photons / n_frames_on), x/y/z [nm], plus any
+                   extra_columns
     """
     n_on = blink_events_df["n_frames_on"].to_numpy()
     frame_start = blink_events_df["frame_start"].to_numpy()
@@ -288,7 +310,7 @@ def expand_active_frames(fluorophores_df, blink_events_df):
         "photon_rate": rep_rate,
     })
     return active.merge(
-        fluorophores_df[["fluorophore_id", "x [nm]", "y [nm]", "z [nm]"]],
+        fluorophores_df[["fluorophore_id", "x [nm]", "y [nm]", "z [nm]", *extra_columns]],
         on="fluorophore_id", how="left",
     )
 

@@ -163,61 +163,85 @@ def calc_loc_density(hull_3D):
     except QhullError:
         return (0.0, 0.0)
     
-def calculate_nanodomain_characteristics(locs):
+def calculate_nanodomain_characteristics(locs, percentile=75.0):
     """
-    Calculates characteristics of nanodomains found via DBSCAN clustering, stores information into new dataframe
+    Calculates characteristics of nanodomains found via DBSCAN clustering, one row per cluster.
+
+    Size measures:
+        bb_size_2D:            mean of the xy bounding-box width and height (nm) -- the
+                               manuscript's "nanodomain size"
+        bb_size_3D:            mean of the xyz bounding-box extents (nm)
+        geometric_diameter_2D: 2x the `percentile`-th percentile of xy point-to-centroid
+                               distance (nm) -- the same statistic simulate.
+                               calculate_geometric_gt_target / domain_size_cost calibrate
+                               against, so it is directly comparable to a calibration's gt_target
+        hull_size_2D / _3D:    convex hull area (nm^2) / volume (nm^3)
+        density_2D / _3D:      localizations per hull area / volume
+
+    Noise (cluster_label == -1) and clusters with fewer than 4 localizations are skipped.
+    3D measures are NaN when the 3D hull is degenerate (e.g. every point at one z, which
+    happens with integer-binned z); the 2D measures are still reported for that cluster.
+
+    Args:
+        locs:       DataFrame with [x [nm], y [nm], z [nm], cluster_label]
+                    (and optionally cluster_color), e.g. from cluster_dbscan
+        percentile: percentile for geometric_diameter_2D (match the calibration's)
 
     Returns:
         Pandas DataFrame: cluster_df
     """
-
-    # 1. Correctly initialize with column names and use a list to collect rows.
     column_names = [
-        "label",
-        "cluster_color",
-        "centroid",
-        "vertices",
-        "hull_size_2D",
-        "hull_size_3D",
-        "bb_size_2D",
-        "bb_size_3D",
-        "density_2D",
-        "density_3D",
+        "label", "n_locs", "cluster_color",
+        "centroid", "centroid_x", "centroid_y", "centroid_z", "vertices",
+        "hull_size_2D", "hull_size_3D",
+        "bb_size_2D", "bb_size_3D", "geometric_diameter_2D",
+        "density_2D", "density_3D",
     ]
+    has_color = "cluster_color" in locs.columns
     cluster_rows = []
 
-    num_clusters = locs['cluster_label'].max()
-    for label in range(num_clusters):
-        cluster_data = locs[locs['cluster_label'] == label]
-
-        # 3. Add checks to prevent errors on small or degenerate clusters.
-        if len(cluster_data) < 4:  # Need at least 4 points for a 3D hull.
+    clustered = locs[locs["cluster_label"] != -1]
+    for label, cluster_data in clustered.groupby("cluster_label"):
+        if len(cluster_data) < 4:
             continue
-        
+
+        points_3D = cluster_data[["x [nm]", "y [nm]", "z [nm]"]].to_numpy(dtype=float)
+        points_2D = points_3D[:, :2]
+
         try:
-            nanodomain_hull = ConvexHull(cluster_data[['x [nm]', 'y [nm]', 'z [nm]']].values)
+            hull_2D = ConvexHull(points_2D)
         except QhullError:
-            print(f"Warning: Could not compute convex hull for cluster {label}. Skipping.")
-            continue
-        
-        size_measures = calc_nanodomain_size(nanodomain_hull)
-        density_2D, density_3D = calc_loc_density(nanodomain_hull)
-        
-        # 4. Create a dictionary for the new row. This avoids the length mismatch error.
-        new_row_dict = {
-            "label": label,
-            "cluster_color": cluster_data['cluster_color'].iloc[0],
-            "centroid": np.mean(nanodomain_hull.points[nanodomain_hull.vertices], axis=0),
-            "vertices": nanodomain_hull.points[nanodomain_hull.vertices],
-            "hull_size_2D": size_measures.hull_2D,
-            "hull_size_3D": size_measures.hull_3D,
-            "bb_size_2D": size_measures.bb_2D,
-            "bb_size_3D": size_measures.bb_2D,
-            "density_2D": density_2D,
-            "density_3D": density_3D}
-        
-        cluster_rows.append(new_row_dict)
+            continue  # collinear in xy -- no meaningful size
 
-    # 5. Create the final DataFrame from the list of rows in one efficient operation.
-    cluster_df = pd.DataFrame(cluster_rows, columns=column_names)
-    return cluster_df
+        try:
+            hull_3D = ConvexHull(points_3D)
+            hull_size_3D = hull_3D.volume
+            vertices = points_3D[hull_3D.vertices]
+        except QhullError:
+            hull_size_3D = np.nan
+            vertices = points_3D[hull_2D.vertices]
+
+        extents = points_3D.max(axis=0) - points_3D.min(axis=0)
+        centroid = points_3D.mean(axis=0)
+        radial_2D = np.linalg.norm(points_2D - centroid[:2], axis=1)
+        n = len(points_3D)
+
+        cluster_rows.append({
+            "label": label,
+            "n_locs": n,
+            "cluster_color": cluster_data["cluster_color"].iloc[0] if has_color else None,
+            "centroid": centroid,
+            "centroid_x": centroid[0],
+            "centroid_y": centroid[1],
+            "centroid_z": centroid[2],
+            "vertices": vertices,
+            "hull_size_2D": hull_2D.volume,
+            "hull_size_3D": hull_size_3D,
+            "bb_size_2D": extents[:2].mean(),
+            "bb_size_3D": extents.mean(),
+            "geometric_diameter_2D": 2.0 * np.percentile(radial_2D, percentile),
+            "density_2D": n / hull_2D.volume if hull_2D.volume > 0 else np.nan,
+            "density_3D": n / hull_size_3D if hull_size_3D > 0 else np.nan,
+        })
+
+    return pd.DataFrame(cluster_rows, columns=column_names)

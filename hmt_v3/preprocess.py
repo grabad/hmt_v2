@@ -70,6 +70,49 @@ def mask_origin(*dfs):
     comb = pd.concat(dfs)
     return float(comb["x [nm]"].min()), float(comb["y [nm]"].min())
 
+def auto_mask_threshold(me3_df, ac_df, bin_size=50, sigma=4.0, factor=0.5, floor=0.05):
+    """
+    Data-driven `thresh` for binarize_nucleus: `factor` x the Otsu threshold of the
+    smoothed density map (over pixels above `floor`, i.e. ignoring empty field of view).
+
+    A fixed thresh is in absolute smoothed locs-per-pixel, so a value tuned on one
+    cell fails on a cell labelled several-fold more sparsely: only the dense
+    heterochromatin rim clears it, the ring doesn't close, binary_fill_holes can't
+    fill the interior, and most of the nucleus is thrown away. Otsu scales with the
+    cell's own density. Otsu alone sits between "dense rim" and "everything else",
+    so it still drops sparse interior; half of it (factor=0.5) lands between
+    "nucleus" and "background" across the cells this was checked on, and on dense
+    cells agrees with the previously hand-tuned thresh=2 to within a few % of area.
+
+    Args:
+        me3_df, ac_df: the same (pre-mask) dataframes you will pass to binarize_nucleus
+        bin_size, sigma: must match the binarize_nucleus call
+        factor:        multiplier on the Otsu threshold
+        floor:         smoothed-density cutoff below which pixels are treated as empty
+                       field of view and left out of the Otsu histogram
+
+    Returns:
+        float: thresh to pass to binarize_nucleus
+    """
+    comb_df = pd.concat([me3_df, ac_df])
+    x = comb_df["x [nm]"].values
+    y = comb_df["y [nm]"].values
+    x_bins = np.arange(x.min(), x.max() + bin_size, bin_size)
+    y_bins = np.arange(y.min(), y.max() + bin_size, bin_size)
+    density_map, _, _ = np.histogram2d(x, y, bins=(x_bins, y_bins))
+    values = gaussian_filter(density_map, sigma=sigma)
+    values = values[values > floor]
+
+    hist, edges = np.histogram(values, bins=256)
+    centers = (edges[:-1] + edges[1:]) / 2
+    w0 = np.cumsum(hist)
+    w1 = w0[-1] - w0
+    cum_mass = np.cumsum(hist * centers)
+    m0 = cum_mass / np.maximum(w0, 1)
+    m1 = (cum_mass[-1] - cum_mass) / np.maximum(w1, 1)
+    otsu = centers[np.argmax(w0 * w1 * (m0 - m1) ** 2)]
+    return float(factor * otsu)
+
 def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1, show_plots=False):
     """
     Binarize nucleus based on intensity thresholding in 2D histogram.

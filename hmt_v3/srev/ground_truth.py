@@ -33,10 +33,18 @@ def resolved_localizations_gt(fluorophores_df, blink_events_df):
     Returns:
         DataFrame: blink_id, fluorophore_id, frame_start, frame_end,
                    n_frames_on, total_photons, end_reason, x/y/z [nm]
-                   (the true position, not what any fitter would recover)
+                   (the true position, not what any fitter would recover),
+                   plus -- when fluorophores_df carries them (a dye-tagged
+                   or pipeline.merge_channels table) -- channel, dye,
+                   spectral_shift_nm and emission_centroid_nm, the
+                   spectral ground truth a RainbowSTORM centroid is
+                   scored against
     """
-    return blink_events_df.merge(
-        fluorophores_df[["fluorophore_id", "x [nm]", "y [nm]", "z [nm]"]],
+    spectral_cols = [c for c in ("channel", "dye", "spectral_shift_nm", "emission_centroid_nm")
+                     if c in fluorophores_df.columns]
+    blink_cols = [c for c in blink_events_df.columns if c not in spectral_cols]
+    return blink_events_df[blink_cols].merge(
+        fluorophores_df[["fluorophore_id", "x [nm]", "y [nm]", "z [nm]", *spectral_cols]],
         on="fluorophore_id", how="left",
     )
 

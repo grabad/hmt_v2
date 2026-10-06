@@ -1,4 +1,9 @@
 .vscode/
 __pycache__/
 test_data/
+raw_data/
 sr-ev_raw/
+ovito_export/
+ssmlm_export/
+sr_ev_pipeline_demo_output/
+analysis_output/
