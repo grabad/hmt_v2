@@ -26,7 +26,7 @@ CENTROID_COLS = {2: ["centroid_x", "centroid_y"], 3: ["centroid_x", "centroid_y"
 def radial_profile(cell, cell_id, condition):
     rows = []
     for channel in C.CHANNELS:
-        profile = hmt.simulate.extract_radial_density_profile(
+        profile = hmt.measure.extract_radial_density_profile(
             cell[channel], cell["contour_bands"], cell["x_min"], cell["y_min"], bin_size=cell["bin_nm"])
         peak = profile.max() if profile.max() > 0 else 1.0
         for band, value in enumerate(profile):

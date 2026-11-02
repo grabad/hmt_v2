@@ -1,14 +1,18 @@
-import napari
+"""
+DBSCAN clustering of localizations into nanodomains, and per-nanodomain
+size / density measurements (manuscript Fig. 2d/e, Fig. 6g/h).
+
+Use cluster_dbscan_density_corrected with a calibration from
+calibrate.optimize_dbscan_size_matching so eps / min_samples follow each cell's
+own labelling density; cluster_dbscan is the fixed-parameter primitive.
+Nanodomain sizes from calculate_nanodomain_characteristics use the same
+geometric_diameter_2D statistic the calibration targets.
+"""
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import napari
+from scipy.spatial import ConvexHull, QhullError
 from sklearn.cluster import DBSCAN
-from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.spatial import ConvexHull, cKDTree
-from scipy.spatial.qhull import QhullError
-from scipy.optimize import minimize_scalar
+
 
 def cluster_dbscan(loc_df, eps=50, min_samples=8, use_z=False, n_jobs=-1):
     """
@@ -51,12 +55,13 @@ def cluster_dbscan(loc_df, eps=50, min_samples=8, use_z=False, n_jobs=-1):
 
     return loc_df
 
+
 def cluster_dbscan_density_corrected(loc_df, calibration, area_nm2, use_z=False,
                                      min_eps=10.0, min_min_samples=3, n_jobs=-1):
     """
     Cluster localization data with DBSCAN, using an (eps, min_samples) pair derived
     from a density calibration instead of a single fixed value applied irrespective
-    of local labelling density. See simulate.optimize_dbscan_size_matching, which
+    of local labelling density. See calibrate.optimize_dbscan_size_matching, which
     fits eps = eps_coef * density^eps_exp and min_samples = min_samples_slope *
     density + min_samples_intercept from simulated ground truth.
 
@@ -68,7 +73,7 @@ def cluster_dbscan_density_corrected(loc_df, calibration, area_nm2, use_z=False,
 
     Args:
         loc_df:           DataFrame with [x [nm], y [nm]] (and [z [nm]] if use_z=True)
-        calibration:       dict returned by simulate.optimize_dbscan_size_matching;
+        calibration:       dict returned by calibrate.optimize_dbscan_size_matching;
                           must have converged (at least 2 fitted densities)
         area_nm2:          imaged area in nm^2 used to compute loc_df's density —
                           must be measured the same way as the calibration's
@@ -102,67 +107,7 @@ def cluster_dbscan_density_corrected(loc_df, calibration, area_nm2, use_z=False,
     params = {'density': density, 'eps': eps, 'min_samples': min_samples}
     return clustered_df, params
 
-def calc_nanodomain_size(locs):
-    """
-    Calculate and return the size of the nanodomain using 4 methods.
-    Returns a dictionary of the results.
-    """
-    points_2D = locs[["x [nm]", "y [nm]"]].values
-    points_3D = locs[["x [nm]", "y [nm]", "z [nm]"]].values
-    
-    # Define a default empty dictionary for failed/small clusters
-    empty_res = {'hull_2D': 0.0, 'hull_3D': 0.0, 'bb_2D': 0.0, 'bb_3D': 0.0}
-    
-    if len(points_2D) < 4:
-        return empty_res
-        
-    try:
-        hull_2D = ConvexHull(points_2D)
-        hull_3D = ConvexHull(points_3D)
-        
-        hull_size_2D = hull_2D.volume
-        hull_size_3D = hull_3D.volume
-        
-        bb_size_2D = (points_2D.max(axis=0) - points_2D.min(axis=0)).mean()
-        bb_size_3D = (points_3D.max(axis=0) - points_3D.min(axis=0)).mean()
 
-        # Return as a dictionary mapping the option names to the values
-        return {
-            'hull_2D': hull_size_2D,
-            'hull_3D': hull_size_3D,
-            'bb_2D': bb_size_2D,
-            'bb_3D': bb_size_3D
-        }
-    
-    except Exception:
-        return empty_res
-    
-def calc_loc_density(hull_3D):
-    """
-    Calculate 2D and 3D localization density from a pre-computed 3D convex hull.
-    
-    Returns:
-        tuple: (density_2D, density_3D)
-    """
-    points_3D = hull_3D.points
-    points_2D = points_3D[:, :2]
-
-    if len(points_2D) < 4:
-        return (0.0, 0.0)
-        
-    try:
-        # The 3D hull is already calculated. Handle case where volume is 0.
-        density_3D = len(points_3D)/hull_3D.volume if hull_3D.volume > 0 else 0.0
-        
-        # We still need to calculate the 2D hull for the 2D density
-        hull_2D = ConvexHull(points_2D)
-        density_2D = len(points_2D)/hull_2D.volume if hull_2D.volume > 0 else 0.0
-
-        return (density_2D, density_3D)
-    
-    except QhullError:
-        return (0.0, 0.0)
-    
 def calculate_nanodomain_characteristics(locs, percentile=75.0):
     """
     Calculates characteristics of nanodomains found via DBSCAN clustering, one row per cluster.

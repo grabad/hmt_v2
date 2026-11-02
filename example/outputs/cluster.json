@@ -1,0 +1,39 @@
+{
+  "cell_id": "k27_k27_thaw009",
+  "condition": "NT",
+  "calibration": "NT",
+  "me3": {
+    "density": 0.0010699384478972276,
+    "eps": 121.34487512018241,
+    "min_samples": 58,
+    "density_per_um2": 1069.9384478972277,
+    "calibrated_density_range_per_um2": [
+      104.44,
+      1044.56
+    ],
+    "extrapolated": false,
+    "n_locs": 259436,
+    "frac_locs_clustered": 0.14179990440802356,
+    "n_nanodomains": 148,
+    "mean_bb_size_nm": 369.05339138461585,
+    "median_bb_size_nm": 333.16025851167,
+    "mean_diameter_nm": 293.1523460974202
+  },
+  "ac": {
+    "density": 0.0009250136610613356,
+    "eps": 150.6828925026363,
+    "min_samples": 61,
+    "density_per_um2": 925.0136610613356,
+    "calibrated_density_range_per_um2": [
+      86.67992047713719,
+      866.9666213246835
+    ],
+    "extrapolated": true,
+    "n_locs": 224295,
+    "frac_locs_clustered": 0.26593548674736395,
+    "n_nanodomains": 211,
+    "mean_bb_size_nm": 491.68852720960234,
+    "median_bb_size_nm": 436.9164387086921,
+    "mean_diameter_nm": 391.3282419710718
+  }
+}

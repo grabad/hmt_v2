@@ -1,19 +1,44 @@
-import napari
-import numpy as np
-import pandas as pd
+"""
+Plotting for the hmt_v3 analysis: interactive 3D napari viewers for clustered
+localizations and seeds, and matplotlib figures for simulated nanodomains,
+RDF / ADF, pair correlation, domain packing, and the DBSCAN calibration.
+
+napari is imported only inside the napari viewers, so importing this module
+(and hmt_v3) works headless. The matplotlib functions call plt.show(); under a
+non-interactive backend (as in drivers/) that is a no-op and the figures stay
+open for saving. (Plots of the toy integration sweeps live in sweep.)
+
+Mark colours used throughout: H3K27me3 green (#77DD76), H3K27ac red (#FF6962).
+"""
 import matplotlib.pyplot as plt
-import napari
-from sklearn.cluster import DBSCAN
-from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
+import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from scipy.spatial import ConvexHull, cKDTree
-from scipy.spatial.qhull import QhullError
-from scipy.optimize import minimize_scalar
+from scipy.spatial import ConvexHull, QhullError, cKDTree
 
 
+# --- Interactive 3D viewers (napari) -------------------------------------------
 
 def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
+    """
+    Opens a napari 3D viewer with both marks' clustered localizations, split
+    into four point layers: nanodomain and noise (cluster_label == -1) points
+    for H3K27me3 and H3K27ac. Face colour is each point's "cluster_color" and
+    the border colour identifies the mark (green me3, red ac).
+
+    Point size is the localization's "sigmax [nm]" / 110 * scaling_factor
+    (110 nm = camera pixel size), so sharper fits draw smaller.
+
+    Args:
+        me3_df, ac_df:  clustered DataFrames (e.g. from cluster.cluster_dbscan)
+                        with "x [nm]", "y [nm]", "z [nm]", "sigmax [nm]",
+                        "cluster_label" and "cluster_color"
+        scaling_factor: multiplier on the PSF-width-based point size
+
+    Returns:
+        None. Opens the viewer; call napari.run() when running as a script.
+    """
+    import napari
+
     me3_df = me3_df.copy()
     ac_df = ac_df.copy()
     
@@ -84,13 +109,19 @@ def plot_clusters_napari(me3_df, ac_df, scaling_factor=10):
 
 def plot_seeds_napari(me3_seeds=None, ac_seeds=None, seed_size=15):
     """
-    Visualizes raw (N, 3) numpy matrices of ground-truth seeds in 3D.
-    
+    Opens a napari 3D viewer showing simulated nanodomain seeds (domain
+    centres), e.g. from simulate.place_seeds or generate_nucleus's info["seeds"].
+
     Args:
-        me3_seeds (np.ndarray, optional): (N, 3) matrix of H3K27me3 seeds. Plotted in green.
-        ac_seeds (np.ndarray, optional): (N, 3) matrix of H3K27ac seeds. Plotted in red.
-        seed_size (int): Visual size of the points.
+        me3_seeds: optional (N, 3) array of H3K27me3 seed [x, y, z] (nm), drawn green
+        ac_seeds:  optional (N, 3) array of H3K27ac seed [x, y, z] (nm), drawn red
+        seed_size: point size
+
+    Returns:
+        None. Opens the viewer; call napari.run() when running as a script.
     """
+    import napari
+
     viewer = napari.Viewer()
     
     # Exact colors from your clustering script
@@ -122,19 +153,25 @@ def plot_seeds_napari(me3_seeds=None, ac_seeds=None, seed_size=15):
     # Maintain the exact spatial orientation from your cluster viewer
     viewer.dims.order = (2, 1, 0)
     viewer.dims.ndisplay = 3
-    
+
+
+# --- Simulated nanodomains -----------------------------------------------------
+
 def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=True, ax=None):
     """
-    2D scatter plot (XY projection) of localizations from spawn_nanodomains.
-    Each cluster_label is drawn in a distinct color; cluster_label == -1 is drawn in gray.
+    2D scatter plot (XY projection) of labelled localizations, e.g. from
+    simulate.spawn_nanodomains / generate_nucleus or a DBSCAN result.
+    Each cluster_label gets a tab10 colour; cluster_label == -1 is drawn gray.
 
     Args:
-        df: DataFrame with columns [x [nm], y [nm], z [nm], cluster_label]
-        seeds: optional (N, 3) array of seed coordinates — plotted as red stars
-        title: plot title
+        df:         DataFrame with columns [x [nm], y [nm], cluster_label]
+        seeds:      optional (N, 2+) array of seed coordinates — plotted as red stars
+        title:      plot title
         point_size: marker size for localizations
-        alpha: opacity of localization points
-        ax: optional existing Axes to draw into; if None a new figure is created
+        alpha:      opacity of localization points
+        plot_seeds: draw `seeds` (if given)
+        ax:         optional existing Axes to draw into; if None a new figure
+                    is created and shown
     """
     _standalone = ax is None
     if _standalone:
@@ -169,15 +206,17 @@ def plot_nanodomain_2d(df, seeds=None, title="Nanodomains", point_size=10, alpha
 
 def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha=0.5, plot_seeds=False, plot_hulls=True, hull_alpha=0.15):
     """
-    3D scatter plot of localizations from spawn_nanodomains.
-    Each cluster_label is drawn in a distinct color.
+    3D scatter plot of labelled localizations, e.g. from
+    simulate.spawn_nanodomains. Each cluster_label gets a tab10 colour;
+    cluster_label == -1 is drawn gray.
 
     Args:
-        df: DataFrame with columns [x [nm], y [nm], z [nm], cluster_label]
-        seeds: optional (N, 3) array of seed coordinates — plotted as red stars
-        title: plot title
+        df:         DataFrame with columns [x [nm], y [nm], z [nm], cluster_label]
+        seeds:      optional (N, 3) array of seed coordinates — plotted as red stars
+        title:      plot title
         point_size: marker size for localizations
-        alpha: opacity of localization points
+        alpha:      opacity of localization points
+        plot_seeds: draw `seeds` (if given)
         plot_hulls: if True, draw the convex hull of each cluster
         hull_alpha: opacity of convex hull faces
     """
@@ -225,14 +264,17 @@ def plot_nanodomain_3d(df, seeds=None, title="Nanodomains", point_size=10, alpha
 
 def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10, rdf_title=None, adf_title=None):
     """
-    Plots the RDF and ADF for H3K27me3 and H3K27ac on shared axes for direct comparison.
+    Plots the RDF and ADF for H3K27me3 and H3K27ac on shared axes for direct
+    comparison (RDF in millilocs / nm^2; each ADF normalised to sum to 1).
 
     Args:
-        me3_rdf: 1D RDF array for H3K27me3
-        me3_adf: 1D ADF array for H3K27me3
-        ac_rdf:  1D RDF array for H3K27ac
-        ac_adf:  1D ADF array for H3K27ac
-        step:    bin width in nm (must match extraction)
+        me3_rdf:   1D RDF array for H3K27me3 (measure.extract_empirical_parameters)
+        me3_adf:   1D ADF array for H3K27me3
+        ac_rdf:    1D RDF array for H3K27ac
+        ac_adf:    1D ADF array for H3K27ac
+        step:      bin width in nm (must match extraction)
+        rdf_title: RDF panel title; None = "Radial Distribution Function"
+        adf_title: ADF panel title; None = "Axial Distribution Function"
     """
     me3_rdf = np.asarray(me3_rdf, dtype=float)
     me3_adf = np.asarray(me3_adf, dtype=float)
@@ -274,6 +316,8 @@ def plot_rdf_adf(me3_rdf, me3_adf, ac_rdf, ac_adf, step=10, rdf_title=None, adf_
     plt.show()
 
 
+# --- Simulation vs. real cell --------------------------------------------------
+
 def plot_seed_spacing(empirical_nnd, sim_seeds, bins=30, label_real='Real domains',
                       label_sim='Simulated seeds', ax=None):
     """
@@ -283,7 +327,7 @@ def plot_seed_spacing(empirical_nnd, sim_seeds, bins=30, label_real='Real domain
     the empirical domain arrangement rather than an independent-Poisson one.
 
     Args:
-        empirical_nnd: 1D array of real NNDs (from simulate.measure_seed_spacing)
+        empirical_nnd: 1D array of real NNDs (from measure.measure_seed_spacing)
         sim_seeds:     (N, 3) or (N, 2) array of simulated seed coordinates
         bins:          number of histogram bins (shared across both curves)
         label_real:    legend label for the empirical distribution
@@ -324,14 +368,14 @@ def plot_seed_spacing(empirical_nnd, sim_seeds, bins=30, label_real='Real domain
 def plot_domain_packing(result, ax=None):
     """
     Plots the domain overlap-margin distribution from
-    simulate.diagnose_domain_packing: nearest-neighbour centroid distance minus
+    calibrate.diagnose_domain_packing: nearest-neighbour centroid distance minus
     the sum of the two domains' radii, for every true domain. Negative values
     mean that domain's nearest neighbour geometrically overlaps it — a limit no
     DBSCAN parameter choice can get past, since the two domains' localizations
     are genuinely interspersed in the underlying point cloud.
 
     Args:
-        result: dict from simulate.diagnose_domain_packing
+        result: dict from calibrate.diagnose_domain_packing
         ax:     optional existing Axes; a new figure is created if None
     """
     margin = np.asarray(result['overlap_margin'], dtype=float)
@@ -364,17 +408,19 @@ def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
     Plots Ripley's L(r) - r and the pair correlation g(r) for the real cell and,
     optionally, the simulated reconstruction, on shared axes. Overlap means the
     simulation reproduces the density-independent clustering structure measured by
-    simulate.measure_pair_correlation.
+    measure.measure_pair_correlation.
 
     Reference lines: L(r) - r = 0 and g(r) = 1 are complete spatial randomness.
     L(r) - r > 0 (g > 1) is clustering; L(r) - r < 0 (g < 1) is regularity.
 
     Args:
-        pcf_real:   dict from simulate.measure_pair_correlation (real cell)
+        pcf_real:   dict from measure.measure_pair_correlation (real cell)
         pcf_sim:    optional dict from measure_pair_correlation (simulation)
-        r_domain:   optional domain-scale radius (nm) to mark with a vertical line
+        r_domain:   accepted for call compatibility but currently not drawn
+                    (the vertical domain-scale marker is commented out)
         label_real: legend label for the real curve
-        label_sim:  legend label for the simulated curve
+        label_sim:  legend label for the simulated curve (dashed)
+        color:      "green" (me3 colour), "red" (ac colour), or None for black
     """
     _, axes = plt.subplots(1, 2, figsize=(11, 4.5), label=' ')
 
@@ -411,6 +457,8 @@ def plot_pair_correlation(pcf_real, pcf_sim=None, r_domain=None,
     plt.show()
 
 
+# --- DBSCAN calibration --------------------------------------------------------
+
 def plot_dbscan_calibration(me3_result, ac_result, title='DBSCAN Calibration: H3K27me3 vs H3K27ac'):
     """
     Plots the H3K27me3 and H3K27ac DBSCAN calibration curves on separate axes
@@ -418,7 +466,7 @@ def plot_dbscan_calibration(me3_result, ac_result, title='DBSCAN Calibration: H3
     a linear function of density. Reads the 'densities' / 'best_epsilons' /
     'eps_coef' / 'eps_exp' / 'eps_r_squared' / 'best_min_samples' /
     'min_samples_slope' / 'min_samples_intercept' / 'min_samples_r_squared'
-    keys returned by simulate.optimize_dbscan_size_matching.
+    keys returned by calibrate.optimize_dbscan_size_matching.
 
     Args:
         me3_result: dict returned by optimize_dbscan_size_matching for H3K27me3
@@ -497,6 +545,8 @@ def plot_size_vs_density(density_fractions, arbitrary_sizes, corrected_sizes, tr
         arbitrary_color:    line color for the arbitrary-params series
         corrected_color:    line color for the density-corrected-params series
         title:              figure title
+        text_loc:           (x, y) in axes coordinates of the "Failed to identify
+                           nanodomain" note, drawn when any size is NaN
     """
     fig, ax = plt.subplots(figsize=(6.5, 4.8))
 

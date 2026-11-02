@@ -1,0 +1,13 @@
+{
+  "cell_id": "k27_k27_thaw009",
+  "condition": "NT",
+  "mask_thresh": 1.4331666359679263,
+  "n_me3_raw": 334552,
+  "n_ac_raw": 281965,
+  "n_me3": 259436,
+  "n_ac": 224295,
+  "mask_area_um2": 242.4775,
+  "me3_density_per_um2": 1069.9384478972277,
+  "ac_density_per_um2": 925.0136610613356,
+  "me3_ac_ratio": 1.1566731313671728
+}

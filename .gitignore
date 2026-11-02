@@ -7,3 +7,5 @@ ovito_export/
 ssmlm_export/
 sr_ev_pipeline_demo_output/
 analysis_output/
+meng_data/
+analysis_output_*/

@@ -148,6 +148,7 @@ def plot_size_vs_density(table, r2, gt_diameter, channel, path):
 
 def calibrate_channel(cell, channel, out, rng_seed):
     log(f"  [{channel}] generate_nucleus (domain_scale={C.DOMAIN_SCALE_NM[channel]})")
+    np.random.seed(rng_seed)  # spawn_nanodomains / add_noise_locs draw from NumPy's global state, not rng
     _, sim_df, info = hmt.simulate.generate_nucleus(
         cell[channel], cell["contour_bands"], cell["x_min"], cell["y_min"], px_size=cell["bin_nm"],
         domain_scale=C.DOMAIN_SCALE_NM[channel], noise_fraction=C.NOISE_FRACTION[channel],
@@ -163,7 +164,7 @@ def calibrate_channel(cell, channel, out, rng_seed):
     log(f"  [{channel}] crop {bounds[1] - bounds[0]:.0f} nm square: {len(crop_df):,} locs, "
         f"{len(crop_df) / area_nm2 * 1e6:.0f} locs/um^2 (nucleus mean {len(sim_df) / cell['area_nm2'] * 1e6:.0f})")
 
-    packing = hmt.simulate.diagnose_domain_packing(crop_df, domain_scale=C.DOMAIN_SCALE_NM[channel], use_z=C.USE_Z)
+    packing = hmt.calibrate.diagnose_domain_packing(crop_df, domain_scale=C.DOMAIN_SCALE_NM[channel], use_z=C.USE_Z)
     log(f"  [{channel}] {packing['n_domains']} GT domains in crop, "
         f"{packing['frac_overlapping']:.0%} overlap their nearest neighbour")
 
@@ -174,7 +175,7 @@ def calibrate_channel(cell, channel, out, rng_seed):
     log(f"  [{channel}] optimize_dbscan_size_matching: {len(fraction_dfs)} fractions x "
         f"{len(C.MIN_SAMPLES_RANGE)} min_samples")
     with capture_figures(out / f"{channel}_calibration_fit"):
-        calibration = hmt.simulate.optimize_dbscan_size_matching(
+        calibration = hmt.calibrate.optimize_dbscan_size_matching(
             fraction_dfs, area_nm2, min_samples_range=C.MIN_SAMPLES_RANGE, percentile=C.SIZE_PERCENTILE,
             cost_threshold=C.SIZE_COST_THRESHOLD_NM, use_z=C.USE_Z, show_plot=True, verbose=False)
     n_fit = len(calibration["densities"])

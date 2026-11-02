@@ -1,25 +1,41 @@
 """
-HMT Functions for Pre-Processing SMLM images of post-translational histone modificaitons.
-Data should already be separated into separate dataframes for different histone marks (i.e. H3K27me3 and H3K27ac).
+Pre-processing of two-mark sSMLM localizations: filtering, nucleus masking,
+radial contour bands, and density subsampling.
+
+Input is one DataFrame per histone mark (e.g. H3K27me3 and H3K27ac), already
+split by spectral classification, with columns "x [nm]", "y [nm]", "z [nm]".
+
+Mask / contour grid convention (shared with measure, simulate and calibrate):
+    * binarize_nucleus histograms the combined, PRE-mask localizations on a
+      bin_size grid whose origin is their minimum x and y -- get it with
+      mask_origin(me3_df, ac_df) and pass that same (x_min, y_min) everywhere
+      a function maps localizations onto the mask.
+    * Arrays are indexed [x_bin, y_bin] (transpose before imshow).
+    * create_radial_contours numbers bands 0 = innermost core ...
+      num_bands - 1 = outer periphery, and -1 = outside the nucleus.
 """
-import napari
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import napari
-from sklearn.cluster import DBSCAN
-from scipy.ndimage import gaussian_filter, binary_fill_holes, label, distance_transform_edt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.spatial import ConvexHull, cKDTree
-from scipy.spatial.qhull import QhullError
-from scipy.optimize import minimize_scalar
+from scipy.ndimage import binary_fill_holes, distance_transform_edt, gaussian_filter, label
+
+
+# --- Localization filters ------------------------------------------------------
 
 def filter_quantile(df, column, percent=0.05):
     """
-    Filter dataframe based by removing the top and bottom percent (default 0.05, leaving the 5th-95th percentile of the data).
-    
+    Keeps rows whose `column` lies within its [percent, 1 - percent] quantile
+    range (default: the 5th-95th percentile), trimming outliers in e.g.
+    photon count or localization uncertainty.
+
+    Args:
+        df:      localization DataFrame
+        column:  name of the column to trim on, e.g. "uncertainty [nm]"
+        percent: fraction trimmed from EACH tail (0.05 -> keep 5th-95th pct)
+
     Returns:
-        Pandas DataFrame: filtered_df
+        pd.DataFrame: the rows of df inside the quantile range (a view, not a copy)
     """
     lower_bound = df[column].quantile(percent)
     upper_bound = df[column].quantile(1 - percent)
@@ -30,11 +46,18 @@ def filter_quantile(df, column, percent=0.05):
 
 def filter_axial(df, padding=1):
     """
-    Axial data often has many localizations at the edge of the axial range. 
-    Remove points at the maximum and minimum z, with optional padding to remove points very close to the edges.
+    Drops localizations piled up at the edges of the axial fitting range.
+
+    Astigmatic z fitting clamps out-of-range emitters to the minimum / maximum
+    calibrated z, so the extreme z values hold a spike of mis-localized points.
+    Keeps only points strictly inside (min z + padding, max z - padding).
+
+    Args:
+        df:      localization DataFrame with "z [nm]"
+        padding: extra margin (nm) trimmed inside each edge of the z range
 
     Returns:
-        Pandas DataFrame: filtered_df
+        pd.DataFrame: the rows of df strictly inside the padded z range
     """
     lower_bound = df["z [nm]"].min() + padding
     upper_bound = df["z [nm]"].max() - padding
@@ -69,6 +92,9 @@ def mask_origin(*dfs):
     """
     comb = pd.concat(dfs)
     return float(comb["x [nm]"].min()), float(comb["y [nm]"].min())
+
+
+# --- Nucleus mask and radial contours ------------------------------------------
 
 def auto_mask_threshold(me3_df, ac_df, bin_size=50, sigma=4.0, factor=0.5, floor=0.05):
     """
@@ -113,12 +139,31 @@ def auto_mask_threshold(me3_df, ac_df, bin_size=50, sigma=4.0, factor=0.5, floor
     otsu = centers[np.argmax(w0 * w1 * (m0 - m1) ** 2)]
     return float(factor * otsu)
 
+
 def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1, show_plots=False):
     """
-    Binarize nucleus based on intensity thresholding in 2D histogram.
-    
+    Builds a binary nucleus mask from the combined localization density of
+    both marks, and keeps only the localizations that fall inside it.
+
+    Both channels are pooled, histogrammed on a bin_size grid starting at their
+    minimum x / y (see mask_origin), Gaussian-smoothed, and thresholded at
+    `thresh`. Holes are filled (so nucleoli and other signal-free interiors
+    count as inside), and only the `num_nuclei` largest connected components
+    are kept.
+
+    Args:
+        me3_df, ac_df: per-mark DataFrames with "x [nm]", "y [nm]"
+        thresh:        smoothed locs-per-pixel threshold for "inside"; see
+                       auto_mask_threshold for a density-adaptive value
+        bin_size:      pixel size of the density grid (nm)
+        sigma:         Gaussian smoothing width, in pixels
+        num_nuclei:    number of largest connected components to keep
+        show_plots:    if True, show density map, mask, and raw vs. masked points
+
     Returns:
         tuple: (binary_mask, me3_masked, ac_masked)
+            binary_mask: 2D bool array indexed [x_bin, y_bin]
+            me3_masked, ac_masked: the rows of each input inside the mask
     """
     comb_df = pd.concat([me3_df, ac_df])
     x = comb_df["x [nm]"].values
@@ -192,13 +237,129 @@ def binarize_nucleus(me3_df, ac_df, thresh, bin_size=50, sigma=4.0, num_nuclei=1
 
     return binary_mask, me3_masked, ac_masked
 
+
+def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
+    """
+    Splits an arbitrarily shaped nucleus mask into concentric radial bands
+    using the Euclidean distance transform, so localizations can be binned by
+    depth into the nucleus (periphery vs. interior) regardless of its shape.
+
+    Distance to the nearest background pixel is binned into num_bands equal
+    steps from 0 to its maximum. Bands are numbered 0 = innermost core up to
+    num_bands - 1 = outermost periphery; pixels outside the mask are -1.
+    Because bands are equal distance steps, a mask whose deepest pixel is
+    fewer than num_bands pixels from the edge leaves some bands empty (the edge
+    pixels, at distance 1, then land a few bands short of num_bands - 1).
+
+    Args:
+        binary_mask: 2D bool mask indexed [x_bin, y_bin], from binarize_nucleus
+        num_bands:   number of radial bands
+        show_plots:  if True, show the distance map and the band map
+
+    Returns:
+        tuple: (distance_map, contour_bands)
+            distance_map:  2D float array, distance (pixels) to the mask edge
+            contour_bands: 2D int array, band index per pixel (-1 outside)
+    """
+    # Calculate the distance of each pixel inside the mask to the nearest background pixel
+    distance_map = distance_transform_edt(binary_mask)
+    
+    # Create discrete contour bands
+    contour_bands = np.zeros_like(distance_map, dtype=int)
+    max_dist = distance_map.max()
+    
+    if max_dist > 0:
+        # Bin the distances into the requested number of bands, then flip so
+        # band 0 is the innermost core and band num_bands - 1 the outer periphery
+        bins = np.linspace(0, max_dist, num_bands + 1)
+        
+        # Only assign bands to pixels inside the mask
+        inside_mask = binary_mask > 0
+        outside_mask = binary_mask <= 0
+        
+        contour_bands[inside_mask] = np.clip(np.digitize(distance_map[inside_mask], bins), 1, num_bands)
+        contour_bands[inside_mask] = num_bands - contour_bands[inside_mask]
+        contour_bands[outside_mask] = contour_bands[outside_mask] - 1
+        
+    if show_plots:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        
+        im1 = axes[0].imshow(distance_map.T, origin='lower', cmap='viridis')
+        axes[0].set_title('Distance Transform Map')
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+        fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+        
+        cmap = plt.get_cmap('tab20_r').copy()
+        cmap.set_under('white')
+        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap=cmap, vmax=num_bands, vmin=0)
+        axes[1].set_title(f'Radial Contours ({num_bands} Bands)')
+        axes[1].set_xticks([])
+        axes[1].set_yticks([])
+        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+        
+        plt.tight_layout()
+        plt.show()
+        
+    return distance_map, contour_bands
+
+
+def assign_contour_bands(df, contour_bands, bin_size=50, x_min=None, y_min=None):
+    """
+    Looks up the radial contour band (from create_radial_contours) of every
+    localization and adds it as a "contour_band" column (-1 = outside nucleus).
+
+    Pass x_min / y_min = mask_origin(me3_df, ac_df) of the pre-mask inputs.
+    If omitted they default to df's own minimum x / y, which is only the mask
+    origin when df is the full pre-mask data; for masked or single-channel
+    data it shifts every point into the wrong band.
+
+    Args:
+        df:            DataFrame with "x [nm]", "y [nm]"
+        contour_bands: 2D int array from create_radial_contours
+        bin_size:      pixel size in nm (must match contour_bands)
+        x_min, y_min:  mask grid origin in nm; None = df's own minimum
+
+    Returns:
+        pd.DataFrame: a copy of df with a "contour_band" column
+    """
+    df = df.copy()
+    coords = df[["x [nm]", "y [nm]"]].to_numpy()
+
+    if x_min is None:
+        x_min = coords[:, 0].min()
+    if y_min is None:
+        y_min = coords[:, 1].min()
+
+    x_idx = np.clip(((coords[:, 0] - x_min) // bin_size).astype(int), 0, contour_bands.shape[0] - 1)
+    y_idx = np.clip(((coords[:, 1] - y_min) // bin_size).astype(int), 0, contour_bands.shape[1] - 1)
+
+    df["contour_band"] = contour_bands[x_idx, y_idx]
+    return df
+
+
+# --- Density subsampling -------------------------------------------------------
+
 def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_plots=False, num_plots=4):
     """
-    Subsamples the dataframes to simulate lower localization densities.
-    Generates `num_samples` evenly spaced fractions from 1.0 down to > 0.
-    
+    Randomly thins both channels to a ladder of lower labelling densities, to
+    mimic reduced staining efficiency (independent thinning).
+
+    Fractions are num_samples evenly spaced values from 1.0 down to
+    1 / num_samples; fraction 1.0 returns unsampled copies.
+
+    Args:
+        me3_df, ac_df: per-mark localization DataFrames
+        num_samples:   number of density fractions
+        random_state:  seed for DataFrame.sample (ac uses random_state + 1)
+        show_plots:    if True, scatter-plot a few of the subsampled fields
+        num_plots:     how many fractions to show when show_plots is True
+
     Returns:
-        list of tuples: Each tuple contains (me3_sampled, ac_sampled, fraction)
+        tuple: (sampled_data, fractions)
+            sampled_data: list of (me3_sampled, ac_sampled, fraction) tuples,
+                          densest first
+            fractions:    1D array of the fractions used
     """
     fractions = np.linspace(1.0, 1.0/num_samples, num_samples)
     
@@ -241,54 +402,3 @@ def sample_lower_densities(me3_df, ac_df, num_samples=10, random_state=42, show_
         plt.show()
 
     return sampled_data, fractions
-
-def create_radial_contours(binary_mask, num_bands=100, show_plots=False):
-    """
-    Breaks a non-circular binary mask into radial contours (concentric bands)
-    using the Euclidean Distance Transform.
-    
-    Returns:
-        tuple: (distance_map, contour_bands)
-    """
-    # Calculate the distance of each pixel inside the mask to the nearest background pixel
-    distance_map = distance_transform_edt(binary_mask)
-    
-    # Create discrete contour bands
-    contour_bands = np.zeros_like(distance_map, dtype=int)
-    max_dist = distance_map.max()
-    
-    if max_dist > 0:
-        # Bin the distances into the requested number of bands
-        # Band 1 is the outermost boundary, Band `num_bands` is the innermost core
-        bins = np.linspace(0, max_dist, num_bands + 1)
-        
-        # Only assign bands to pixels inside the mask
-        inside_mask = binary_mask > 0
-        outside_mask = binary_mask <= 0
-        
-        contour_bands[inside_mask] = np.clip(np.digitize(distance_map[inside_mask], bins), 1, num_bands)
-        contour_bands[inside_mask] = 100 - contour_bands[inside_mask]
-        contour_bands[outside_mask] = contour_bands[outside_mask] - 1
-        
-    if show_plots:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-        
-        im1 = axes[0].imshow(distance_map.T, origin='lower', cmap='viridis')
-        axes[0].set_title('Distance Transform Map')
-        axes[0].set_xticks([])
-        axes[0].set_yticks([])
-        fig.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
-        
-        cmap = plt.get_cmap('tab20_r').copy()
-        cmap.set_under('white')
-        im2 = axes[1].imshow(contour_bands.T, origin='lower', cmap=cmap, vmax=num_bands, vmin=0)
-        axes[1].set_title(f'Radial Contours ({num_bands} Bands)')
-        axes[1].set_xticks([])
-        axes[1].set_yticks([])
-        fig.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
-        
-        plt.tight_layout()
-        plt.show()
-        
-    return distance_map, contour_bands
-

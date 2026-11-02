@@ -112,8 +112,15 @@ def fit_frame_to_points(x_nm, y_nm, pixel_size_nm, margin_nm=300.0):
 
 def astigmatic_sigma_nm(z_nm, config):
     """
-    Returns (sigma_x_nm, sigma_y_nm) for the given z (nm), per RenderConfig's
-    astigmatic calibration. Vectorized over an array of z values.
+    Astigmatic PSF widths at the given z, per RenderConfig's astigmatic
+    calibration (x and y foci offset by +/- focal_offset_nm).
+
+    Args:
+        z_nm:   scalar or array of emitter z (nm)
+        config: RenderConfig
+
+    Returns:
+        (sigma_x_nm, sigma_y_nm), each shaped like z_nm
     """
     z_nm = np.asarray(z_nm, dtype=float)
 

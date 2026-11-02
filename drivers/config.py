@@ -59,8 +59,7 @@ MASK_THRESH = "auto"
 MASK_AUTO_FACTOR = 0.5
 MASK_THRESH_OVERRIDES = {}  # {cell_id: number} for cells the default masks badly (check the QC pngs)
 MASK_AREA_WARN_UM2 = (30.0, 600.0)  # warn if the mask area falls outside this range
-# create_radial_contours hardcodes "100 - band", so it only numbers bands
-# correctly (0 = core ... 99 = periphery) for exactly 100 bands.
+# Radial contour bands: 0 = core ... N_CONTOUR_BANDS - 1 = periphery.
 N_CONTOUR_BANDS = 100
 
 # --- 02 calibrate: inverse Monte Carlo DBSCAN calibration (Fig. 4) --------------
@@ -72,7 +71,8 @@ CALIBRATION_MODE = "per_condition"
 USE_Z = True  # cluster in 3D (XYZ); must be the same in calibration and clustering
 
 # generate_nucleus knobs. domain_scale is the within-domain cutoff radius (nm);
-# None lets generate_nucleus read it off g(r), which tends to underestimate.
+# None lets generate_nucleus read it off g(r). Choose it with sweep_domain_scale.py:
+# at 200 / 250 nm, 96-100% of the simulated domains overlapped their neighbour (Oct 2026 run).
 DOMAIN_SCALE_NM = {"me3": 200.0, "ac": 250.0}
 NOISE_FRACTION = {"me3": None, "ac": None}  # None = estimate from g(r)
 SEED_PLACEMENT = "thomas"  # "thomas" | "inhibition" | "poisson"

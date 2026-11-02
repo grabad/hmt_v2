@@ -1,0 +1,786 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Nanodomain Pipeline Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one tall flowchart pane (scrolls inside itself) covering drivers steps 01–05, a floating detail card for the selected box, and a readable list of every box below. */
+:root {
+  --bg: #F4F6F9;
+  --surface: #FFFFFF;
+  --ink: #141922;
+  --muted: #566072;
+  --rule: #D3D9E2;
+  --tint: #EAEEF4;
+  --band: #EEF1F6;
+  --accent: #27558A;
+  --accent-soft: #DBE6F3;
+  --edge: #8A94A6;
+  --up: #27558A;
+  --down: #B0631A;
+  --weak: #A3241B;
+  --weak-soft: #FBE8E5;
+  --s-input: #5A6475;
+  --s-prep: #4652B8;
+  --s-measure: #2F6FB0;
+  --s-derive: #1F8A7A;
+  --s-seed: #A86A12;
+  --s-build: #4E8A2E;
+  --s-calib: #B5402F;
+  --s-output: #7E4BA6;
+  --s-apply: #B0367F;
+  --s-analyze: #7A6418;
+  --font-head: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1218; --surface: #161C25; --ink: #E4E8EF; --muted: #9BA5B6; --rule: #2C3440; --tint: #1C2330; --band: #121821;
+    --accent: #8EB7E8; --accent-soft: #1E2B3D; --edge: #6C778A; --up: #8EB7E8; --down: #F0A860;
+    --weak: #FF8F84; --weak-soft: #3B1D1B;
+    --s-input: #A3ADBD; --s-prep: #9EA6F2; --s-measure: #74A8E0; --s-derive: #5CC7B4; --s-seed: #E3A94E; --s-build: #8CC96A;
+    --s-calib: #F08C78; --s-output: #C29BE8; --s-apply: #EE8BC8; --s-analyze: #D9C26E;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1218; --surface: #161C25; --ink: #E4E8EF; --muted: #9BA5B6; --rule: #2C3440; --tint: #1C2330; --band: #121821;
+  --accent: #8EB7E8; --accent-soft: #1E2B3D; --edge: #6C778A; --up: #8EB7E8; --down: #F0A860;
+  --weak: #FF8F84; --weak-soft: #3B1D1B;
+  --s-input: #A3ADBD; --s-prep: #9EA6F2; --s-measure: #74A8E0; --s-derive: #5CC7B4; --s-seed: #E3A94E; --s-build: #8CC96A;
+  --s-calib: #F08C78; --s-output: #C29BE8; --s-apply: #EE8BC8; --s-analyze: #D9C26E;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-head);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 80px;
+}
+header { max-width: 48rem; margin-bottom: 20px; }
+.eyebrow { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+h1 { font-size: 2rem; line-height: 1.15; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 10px; text-wrap: balance; }
+h2 { font-size: 1.35rem; font-weight: 600; margin: 0 0 12px; text-wrap: balance; }
+h3 { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 10px; }
+p { margin: 0 0 10px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+a { color: var(--accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.steps-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 18px; padding: 0; list-style: none; font-size: 0.86rem; }
+.steps-row li { display: flex; align-items: center; gap: 6px; }
+.steps-row li:not(:last-child)::after { content: "→"; color: var(--muted); }
+.steps-row b { font-family: var(--font-mono); font-weight: 500; color: var(--accent); margin-right: 4px; }
+
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+  margin-bottom: 10px; font-size: 0.86rem; color: var(--muted);
+}
+.zoom { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.zoom button {
+  font: inherit; font-size: 0.86rem; color: var(--ink); background: none; border: 0;
+  padding: 6px 12px; cursor: pointer; border-right: 1px solid var(--rule); font-variant-numeric: tabular-nums;
+}
+.zoom button:last-child { border-right: 0; }
+.zoom button:hover { background: var(--tint); }
+.zoom output { padding: 6px 10px; border-right: 1px solid var(--rule); min-width: 4.2em; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink); }
+.jump { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.jump button {
+  font: inherit; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 2px 8px; cursor: pointer;
+}
+.jump button:hover { border-color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.legend .ln { width: 22px; height: 0; border-top: 2px solid; border-radius: 0; }
+.legend .wk { font-family: var(--font-mono); font-size: 0.78rem; color: var(--weak); background: var(--weak-soft); border-radius: 4px; padding: 0 4px; }
+
+.pane {
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--surface);
+  max-height: calc(100vh - 140px);
+  min-height: 420px;
+}
+#chart { display: block; }
+#chart .band-key { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--accent); }
+#chart .band-label { font-family: var(--font-head); font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; fill: var(--muted); }
+#chart .edge { fill: none; stroke: var(--edge); stroke-width: 1.4; opacity: 0.6; transition: opacity .15s, stroke .15s; }
+#chart .edge.opt { stroke-dasharray: 5 4; }
+#chart .edge-label { font-family: var(--font-head); font-size: 12px; font-weight: 600; fill: var(--muted); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
+#chart.has-sel .edge { opacity: 0.08; }
+#chart.has-sel .edge.up { opacity: 1; stroke: var(--up); stroke-width: 2.2; }
+#chart.has-sel .edge.down { opacity: 1; stroke: var(--down); stroke-width: 2.2; }
+#chart .node { cursor: pointer; transition: opacity .15s; }
+#chart.has-sel .node { opacity: 0.25; }
+#chart.has-sel .node.sel, #chart.has-sel .node.anc, #chart.has-sel .node.child { opacity: 1; }
+#chart .node:focus { outline: none; }
+#chart .node:focus-visible .box { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { #chart .edge, #chart .node { transition: none; } }
+
+.box {
+  width: 100%; height: 100%;
+  background: var(--surface);
+  border: 1.5px solid var(--rule);
+  border-left: 6px solid var(--stage);
+  border-radius: 9px;
+  padding: 7px 10px 6px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  overflow: hidden;
+  font-family: var(--font-head);
+}
+.box .top { display: flex; align-items: baseline; gap: 7px; }
+.box .id { font-family: var(--font-mono); font-size: 12px; font-weight: 500; color: var(--stage); }
+.box .ttl { font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--ink); }
+.box .sub { font-size: 12.5px; line-height: 1.32; color: var(--muted); }
+.box .foot { margin-top: auto; display: flex; gap: 6px; align-items: baseline; font-family: var(--font-mono); font-size: 10.5px; min-width: 0; }
+.box .refs { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.box .weak { margin-left: auto; color: var(--weak); background: var(--weak-soft); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.box .tag { margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.node.dashed .box { border-style: dashed; border-left-style: solid; }
+.node.decision .box { background: var(--tint); }
+.node:hover .box { border-color: var(--stage); }
+.node.sel .box { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+.node.anc .box { border-color: var(--up); }
+.node.child .box { border-color: var(--down); }
+
+/* Detail card */
+.detail {
+  position: fixed;
+  right: max(18px, calc(env(safe-area-inset-right, 0px) + 18px));
+  bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  width: 380px;
+  max-height: min(72vh, 600px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(10, 20, 40, 0.18);
+  padding: 14px 16px 16px;
+  font-size: 0.92rem;
+  z-index: 20;
+}
+.detail .d-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.detail .d-id { font-family: var(--font-mono); font-weight: 500; color: var(--accent); }
+.detail .d-title { font-weight: 600; font-size: 1.05rem; line-height: 1.25; }
+.detail .close { margin-left: auto; font: inherit; font-size: 0.8rem; color: var(--muted); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.detail .k { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
+.detail .calc { white-space: pre-line; }
+.detail .eq { font-family: var(--font-mono); font-size: 0.82rem; background: var(--tint); border-radius: 6px; padding: 6px 8px; margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail .weak-list { display: grid; gap: 4px; }
+.detail .weak-list a { display: flex; gap: 8px; align-items: baseline; text-decoration: none; color: var(--ink); background: var(--weak-soft); border-radius: 6px; padding: 4px 8px; }
+.detail .weak-list a:hover { text-decoration: underline; }
+.detail .weak-list b { font-family: var(--font-mono); font-weight: 500; color: var(--weak); }
+.detail .weak-list .sev { margin-left: auto; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--weak); white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  font: inherit; font-size: 0.8rem; background: var(--tint); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 9px; cursor: pointer; text-align: left;
+}
+.chip b { font-family: var(--font-mono); font-weight: 500; margin-right: 4px; }
+.chip.up { border-color: var(--up); }
+.chip.down { border-color: var(--down); }
+.chip.ref { border-style: dashed; border-color: var(--up); }
+.detail .empty { color: var(--muted); }
+
+/* List */
+.list { margin-top: 44px; }
+.list > p { max-width: 48rem; color: var(--muted); }
+.stage { margin-top: 26px; }
+.stage h3 { display: flex; align-items: center; gap: 8px; }
+.stage h3 i { width: 11px; height: 11px; border-radius: 3px; background: var(--stage); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--stage);
+  border-radius: 10px; padding: 12px 14px; min-width: 0; cursor: pointer;
+}
+.card:hover { border-color: var(--stage); }
+.card .c-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.card .c-id { font-family: var(--font-mono); font-size: 0.82rem; color: var(--stage); }
+.card .c-title { font-weight: 600; }
+.card .c-calc { font-size: 0.9rem; color: var(--ink); margin-bottom: 6px; white-space: pre-line; }
+.card .c-eq { font-family: var(--font-mono); font-size: 0.78rem; background: var(--tint); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card .c-deps { font-size: 0.8rem; color: var(--muted); }
+.card .c-deps code { font-size: 0.78rem; }
+.card .c-weak { color: var(--weak); }
+footer { margin-top: 40px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 14px; max-width: 48rem; }
+footer p { margin: 0 0 6px; }
+
+@media (max-width: 760px) {
+  h1 { font-size: 1.6rem; }
+  .detail { left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); bottom: max(10px, env(safe-area-inset-bottom, 0px)); width: auto; max-height: 45vh; }
+  .pane { max-height: 70vh; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">drivers/ steps 01–05 · hmt_v3</p>
+    <h1>Nanodomain Pipeline Flow</h1>
+    <p>Every calculation from the RainbowSTORM exports to the condition statistics, as run by <code>python drivers/run_all.py</code>. Each step skips cells whose outputs already exist unless it is run with <code>--overwrite</code>.</p>
+    <ol class="steps-row" aria-label="Pipeline steps">
+      <li><b>01</b>Preprocess each cell</li>
+      <li><b>02</b>Calibrate DBSCAN on a simulated nucleus (2a–2g)</li>
+      <li><b>03</b>Cluster every cell</li>
+      <li><b>04</b>Radial profiles and SNCR</li>
+      <li><b>05</b>Pool cells, compare conditions</li>
+    </ol>
+    <p>Click a box to see how it is computed. Its inputs light up in blue and the boxes that use it in orange. Red IDs such as <span class="mono" style="color:var(--weak)">A2</span> are weak points written up on the <a href="https://claude.ai/artifact/V5iWJv6CrQ9K3Gbxvb51mB" target="_blank" rel="noopener">Nanodomain Calibration Pipeline</a> page, which this chart accompanies.</p>
+  </header>
+
+  <div class="toolbar">
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+      <output id="zoom-val">100%</output>
+      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" id="zoom-fit">Fit width</button>
+      <button type="button" id="zoom-reset">Actual size</button>
+    </div>
+    <div class="jump" id="jump" aria-label="Go to step"></div>
+  </div>
+  <div class="toolbar"><div class="legend" id="legend" aria-label="Legend"></div></div>
+
+  <div class="pane" id="pane">
+    <svg id="chart" role="group" aria-label="Flowchart of the nanodomain pipeline, steps 01 to 05"></svg>
+  </div>
+
+  <aside class="detail" id="detail" aria-live="polite"></aside>
+
+  <section class="list" id="list">
+    <h2>Every step</h2>
+    <p>The same boxes as the chart, grouped by stage. Order within a stage follows the dependencies. Code links open the file at commit 740d91b; each card also says where the function lives after the October module split.</p>
+    <div id="list-body"></div>
+  </section>
+
+  <footer>
+    <p>Built 21 Oct 2026 from the Nanodomain Calibration Pipeline page (15 Oct), the earlier versions of this chart (19 and 21 Oct), and a reading of hmt_v3 and the five driver scripts. The pipeline page only outlines steps 04 and 05; those boxes come from the driver code. The numbers are what the code does, not measurements from a run.</p>
+    <p>Line references are at commit 740d91b, the version the pipeline page describes. Since then <code>simulate.py</code> has been split into <code>measure</code>, <code>simulate</code>, <code>calibrate</code> and <code>export</code> (not yet committed); each box names the new location too.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const BASE = "https://github.com/grabad/hmt_v2/blob/740d91b227c8469e002fa1c29ab89afb83923622/";
+  const PIPE = "https://claude.ai/artifact/V5iWJv6CrQ9K3Gbxvb51mB";
+  const STAGES = {
+    input:   { name: "Inputs", short: "Input", color: "var(--s-input)" },
+    prep:    { name: "Preprocessing", short: "Preprocessing", color: "var(--s-prep)" },
+    measure: { name: "Measured on the source cell", short: "Measured", color: "var(--s-measure)" },
+    derive:  { name: "Derived numbers", short: "Derived number", color: "var(--s-derive)" },
+    seed:    { name: "Seed placement", short: "Seed placement", color: "var(--s-seed)" },
+    build:   { name: "Point generation", short: "Point generation", color: "var(--s-build)" },
+    calib:   { name: "Calibration set and search", short: "Calibration search", color: "var(--s-calib)" },
+    apply:   { name: "Clustering every cell", short: "Clustering", color: "var(--s-apply)" },
+    analyze: { name: "Spatial analysis and statistics", short: "Analysis", color: "var(--s-analyze)" },
+    output:  { name: "Saved outputs", short: "Saved output", color: "var(--s-output)" }
+  };
+  // Weak points as titled and rated on the pipeline page (#A1 … #B11).
+  const WEAK = {
+    A1: ["High", "Simulated domains overlap heavily and are too large"],
+    A2: ["High", "Domains are about √2 too wide in xy"],
+    A3: ["High", "The axial profile mostly measures unrelated pairs"],
+    A4: ["High", "Too many, too small domains when noise is present"],
+    A5: ["Medium", "The simulated z range is wider than the real one"],
+    A6: ["Low", "Domain grouping exists only in xy"],
+    A7: ["Low", "The simulated radial profile is flatter than the real one"],
+    A8: ["Low", "All domains have the same expected shape"],
+    B1: ["High", "The search checks average size only"],
+    B2: ["Medium", "min_samples is weakly determined"],
+    B3: ["Medium", "eps cannot go above 225 nm"],
+    B4: ["Medium", "Calibrated on one size statistic, reported with another"],
+    B5: ["Medium", "Different minimum cluster sizes in calibration and reporting"],
+    B6: ["Medium", "Target measured in 2D, clustering done in 3D"],
+    B7: ["Medium", "One eps for the whole nucleus"],
+    B8: ["Medium", "Separate calibrations per condition"],
+    B9: ["Low", "The noise fraction stays fixed across densities"],
+    B10: ["Low", "The fine search assumes a smooth cost"],
+    B11: ["Low", "Extrapolated cells stay in the analysis"]
+  };
+  const SECTIONS = { "in": ["input", "Input data"], params: ["params", "Parameters"], "01": ["step01", "Step 01 · Preprocess each cell"],
+    "2a": ["s2a", "2a · Source cell"], "2b": ["s2b", "2b · Simulated nucleus"], "2c": ["s2c", "2c · Crop"], "2d": ["s2d", "2d · Density fractions"],
+    "2e": ["s2e", "2e · Parameter search"], "2f": ["s2f", "2f · Curve fit"], "2g": ["s2g", "2g · Fixed vs corrected"],
+    "03": ["step03", "Step 03 · Apply to every cell"], "04": ["after", "After step 03 (outline)"], "05": ["after", "After step 03 (outline)"] };
+
+  const BANDS = [
+    { key: "in", label: "Data", r0: 0, r1: 0 },
+    { key: "01", label: "Preprocess", r0: 1, r1: 6 },
+    { key: "2a", label: "Source", r0: 7, r1: 7 },
+    { key: "2b", label: "Measure", r0: 8, r1: 8 },
+    { key: "2b", label: "Derive", r0: 9, r1: 14 },
+    { key: "2b", label: "Seeds", r0: 15, r1: 18 },
+    { key: "2b", label: "Points", r0: 19, r1: 19 },
+    { key: "2b", label: "Nucleus", r0: 20, r1: 20 },
+    { key: "2c", label: "Crop", r0: 21, r1: 21 },
+    { key: "2d", label: "Thin", r0: 22, r1: 22 },
+    { key: "2e", label: "Search", r0: 23, r1: 25 },
+    { key: "2f", label: "Fit", r0: 26, r1: 26 },
+    { key: "2g", label: "Check", r0: 27, r1: 27 },
+    { key: "03", label: "Cluster", r0: 28, r1: 31 },
+    { key: "04", label: "Spatial", r0: 32, r1: 34 },
+    { key: "05", label: "Compare", r0: 35, r1: 37 }
+  ];
+
+  // deps: [id] drawn · [id, "opt"] dashed · [id, "ref"] named in the box, not drawn · [id, null, label] labelled
+  // code: fn = function, at = path#Lline at 740d91b, now = location after the module split (omitted when unchanged)
+  const NODES = [
+    { id: "RAW", stage: "input", sec: "in", c: 1.5, r: 0, title: "RainbowSTORM exports", sub: "<cell_id>_me3.csv + <cell_id>_ac.csv",
+      calc: "DATA_DIR (default raw_data/) holds one pair of files per cell, already split by spectral classification. Columns used: x [nm], y [nm], z [nm]; step 03 also keeps id, frame, uncertainty [nm] and centroid [nm] when present. The *_comb.csv exports are never read.",
+      code: { fn: "DATA_DIR", at: "drivers/config.py" }, deps: [] },
+    { id: "CFG", stage: "input", sec: "params", c: 3.5, r: 0, title: "Config", sub: "drivers/config.py, one file for every step", tag: "settings",
+      calc: "01: AXIAL_PADDING_NM 1 · MASK_BIN_NM 50 · MASK_SIGMA 4 · MASK_THRESH auto (MASK_AUTO_FACTOR 0.5, MASK_THRESH_OVERRIDES per cell) · MASK_AREA_WARN_UM2 30–600 · N_CONTOUR_BANDS 100 · CONDITION_PATTERNS (act → ActD, else NT) · EXCLUDE_CELLS.\n02: CALIBRATION_MODE per_condition · DOMAIN_SCALE_NM 200 (me3), 250 (ac) · NOISE_FRACTION None (estimated) · SEED_PLACEMENT thomas · CROP_SIZE_NM 5000, CROP_MIN_INSIDE 0.95 · DENSITY_FRACTIONS 1.0, 0.9 … 0.1 · MIN_SAMPLES_RANGE 5, 10 … 70 · SIZE_COST_THRESHOLD_NM 50 · SIZE_PERCENTILE 75 · USE_Z True · RANDOM_SEED 0.\n03: MIN_EPS_NM 10 · MIN_MIN_SAMPLES 3 · EXTRAPOLATION_TOLERANCE 0.05.\n04: SNCR_RADII_NM 10, 20 … 300 · SNCR_NEIGHBORS nanodomains and localizations · SNCR_PRIMARY localizations · SNCR_SUMMARY mean_ratio · SNCR_USE_Z False · SNCR_FIT_MAX_NM 200.\n05: CONDITION_ORDER NT, ActD (NT is the reference).\n--quick writes to analysis_output_quick/ with a 3 µm crop, fractions 1.0, 0.8 … 0.2 and min_samples 5, 15, 25, 35.",
+      code: { fn: "config", at: "drivers/config.py" }, deps: [] },
+
+    { id: "Q1", stage: "prep", sec: "01", c: 2.5, r: 1, title: "Cells and conditions", sub: "pair files by cell_id · condition from the name",
+      calc: "discover_cells pairs every <cell_id>_me3.csv with its <cell_id>_ac.csv. An me3 file without a partner is skipped with a warning; cells in EXCLUDE_CELLS are dropped. The condition is the first CONDITION_PATTERNS entry whose regex is found in the cell_id (case-insensitive): a name containing act is ActD, everything else NT. manifest.csv lists every discovered cell and is what the later steps read.",
+      code: { fn: "discover_cells", at: "drivers/common.py#L93" }, deps: [["RAW"], ["CFG"]] },
+    { id: "Q2", stage: "prep", sec: "01", c: 2.5, r: 2, title: "Axial filter", sub: "drop z within 1 nm of either end, per mark",
+      calc: "filter_axial keeps localizations with min(z) + 1 < z < max(z) − 1 nm, separately for each mark (AXIAL_PADDING_NM). This removes fits that piled up at the ends of the axial range.",
+      code: { fn: "filter_axial", at: "hmt_v3/preprocess.py#L31", now: "hmt_v3/preprocess.py:47" }, deps: [["Q1"]] },
+    { id: "Q3", stage: "prep", sec: "01", c: 1, r: 3, title: "Mask threshold", sub: "0.5 × Otsu of the smoothed density",
+      calc: "auto_mask_threshold pools both marks, bins them into 50 nm pixels and smooths the counts with a Gaussian of σ = 4 px (200 nm). It computes the Otsu threshold over pixels whose smoothed value is above 0.05, which ignores empty field of view, and returns 0.5 × Otsu. A per-cell value in MASK_THRESH_OVERRIDES takes precedence.\nA fixed threshold (the old notebooks used 2) only fits cells of similar density; on sparse ActD cells it kept just the heterochromatin rim and dropped 45–80 % of localizations.",
+      code: { fn: "auto_mask_threshold", at: "hmt_v3/preprocess.py#L73", now: "hmt_v3/preprocess.py:99" }, deps: [["Q2"], ["CFG", "ref"]] },
+    { id: "Q5", stage: "prep", sec: "01", c: 4, r: 3, title: "Mask origin", sub: "min x, y of the filtered data before masking",
+      calc: "mask_origin returns the (x_min, y_min) of the pooled data before masking, which is the corner of the pixel grid. Every later function that maps a localization to a pixel or band needs this exact origin; the masked data's minimum is larger and would shift points into the wrong bands.",
+      code: { fn: "mask_origin", at: "hmt_v3/preprocess.py#L46", now: "hmt_v3/preprocess.py:69" }, deps: [["Q2"]] },
+    { id: "Q4", stage: "prep", sec: "01", c: 1, r: 4, title: "Nucleus mask", sub: "threshold, fill holes, keep the largest region",
+      calc: "binarize_nucleus builds the same smoothed map, keeps pixels above the threshold, fills holes (so nucleoli and other gaps become part of the mask) and keeps the single largest connected region. Localizations outside the mask are dropped.",
+      code: { fn: "binarize_nucleus", at: "hmt_v3/preprocess.py#L116", now: "hmt_v3/preprocess.py:143" }, deps: [["Q3"], ["Q2", "ref"]] },
+    { id: "Q6", stage: "prep", sec: "01", c: 1, r: 5, title: "Radial bands", sub: "100 equal-distance bands, 0 = core … 99 = rim",
+      calc: "create_radial_contours computes each mask pixel's distance to the nearest pixel outside the mask, splits 0 to the largest distance into 100 equal-width intervals, and numbers them 0 = core … 99 = rim, −1 = outside. The bands are equal in distance, not area, so core bands hold far fewer pixels than rim bands.\nAt 740d91b the numbering hard-codes 100 − band, so N_CONTOUR_BANDS must stay 100; the reorganized code uses num_bands.",
+      code: { fn: "create_radial_contours", at: "hmt_v3/preprocess.py#L245", now: "hmt_v3/preprocess.py:241" }, deps: [["Q4"]] },
+    { id: "Q7", stage: "prep", sec: "01", c: 3, r: 5, title: "Density per mark", sub: "masked localizations ÷ mask area",
+      calc: "Mask area = mask pixels × 50² nm². For each mark, density = its masked localizations, noise included, ÷ mask area. This one definition is used everywhere: to choose the calibration source (2a), to measure the crop and fractions (2c–2d), and to read parameters off the curves (03). The log warns when a mask area falls outside 30–600 µm².",
+      code: { fn: "preprocess_cell", at: "drivers/01_preprocess.py#L49" }, deps: [["Q4"]] },
+    { id: "Q8", stage: "output", sec: "01", c: 2.5, r: 6, title: "Per-cell files", sub: "masked parquet · mask.npz · preprocess.json · QC",
+      calc: "cells/<cell_id>/: me3_masked.parquet and ac_masked.parquet (the masked localizations), mask.npz (mask, bands, origin, pixel size, mask area), preprocess.json (counts before and after masking, mask area, density per mark, me3:ac ratio), qc_mask.png and qc_contours.png.\nCheck qc_mask.png for every cell: the mask should cover the whole nucleus, include no neighbouring cell and keep the rim.",
+      code: { fn: "preprocess_cell", at: "drivers/01_preprocess.py#L52" }, deps: [["Q6"], ["Q7"], ["Q5", "ref"]] },
+
+    { id: "SRC", stage: "input", sec: "2a", c: 2.5, r: 7, title: "Calibration source", sub: "densest cell per condition, one mark at a time",
+      calc: "calibration_sources ranks cells by total density (me3 + ac, from preprocess.json).\nper_condition (default): the densest cell of each condition, so NT and ActD each get their own calibration. per_cell: every cell on itself. pooled: the densest cell overall.\nThe same cell serves both marks. Each (source, mark) pair gets the random seed RANDOM_SEED + 100·i + j. Starting from the densest cell lets the thinning in 2d reach every other cell's density.",
+      code: { fn: "calibration_sources", at: "drivers/02_calibrate.py#L37" }, deps: [["Q8"], ["CFG", "ref"]], weak: ["B8"] },
+
+    { id: "M1", stage: "measure", sec: "2b", c: 0, r: 8, title: "Radial profile", sub: "localizations ÷ pixels in each band",
+      calc: "For each of the 100 radial bands: the number of the mark's localizations in the band divided by the number of mask pixels in the band.",
+      code: { fn: "extract_radial_density_profile", at: "hmt_v3/simulate.py#L119", now: "hmt_v3/measure.py:31" }, deps: [["SRC"]] },
+    { id: "M2", stage: "measure", sec: "2b", c: 1, r: 8, title: "RDF", sub: "2D neighbours in 10 nm rings, background removed",
+      calc: "For every localization, count 2D neighbours in 10 nm rings out to 500 nm, divide by ring area, and average over all localizations. Subtract the mean of the outer five rings (460–500 nm) and set negatives to 0.",
+      code: { fn: "extract_empirical_parameters", at: "hmt_v3/simulate.py#L160", now: "hmt_v3/measure.py:74" }, deps: [["SRC"]], weak: ["A2"] },
+    { id: "M3", stage: "measure", sec: "2b", c: 2, r: 8, title: "ADF", sub: "|Δz| of all pairs within 500 nm in 3D",
+      calc: "Histogram, in 10 nm bins from 0 to 500 nm, of |Δz| for every pair of localizations within 500 nm of each other in 3D. No normalization and no background subtraction.",
+      code: { fn: "extract_empirical_parameters", at: "hmt_v3/simulate.py#L160", now: "hmt_v3/measure.py:74" }, deps: [["SRC"]], weak: ["A3"] },
+    { id: "M4", stage: "measure", sec: "2b", c: 3, r: 8, title: "z pools", sub: "real z values grouped by band",
+      calc: "Real z values grouped by the band each localization's xy falls in. Bands with fewer than 20 points use the whole-nucleus pool instead.",
+      code: { fn: "build_z_band_pools", at: "hmt_v3/simulate.py#L48", now: "hmt_v3/simulate.py:41" }, deps: [["SRC"]] },
+    { id: "M5", stage: "measure", sec: "2b", c: 4, r: 8, title: "Pair correlation", sub: "Ripley's K → L(r), g(r), 20 nm steps",
+      calc: "Ripley's K out to 500 nm in 20 nm steps, edge-corrected per point by the fraction of its search disk inside the mask. Removing localizations at random, as weaker labelling does, leaves K, L and g unchanged on average, which is why the simulation is built on them.",
+      eq: "L(r) = √(K/π)\ng(r) = (dK/dr) ÷ 2πr",
+      code: { fn: "measure_pair_correlation", at: "hmt_v3/simulate.py#L1808", now: "hmt_v3/measure.py:213" }, deps: [["SRC"]] },
+
+    { id: "D1", stage: "derive", sec: "2b", c: 3, r: 9, title: "r_domain", sub: "domain scale: 200 nm (me3), 250 nm (ac)",
+      calc: "Taken from DOMAIN_SCALE_NM. Only if that is None is it estimated as the first r where g(r) ≤ 1, which tends to underestimate.",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2205", now: "hmt_v3/simulate.py:622" }, deps: [["CFG", "ref"], ["M5", "opt"]], weak: ["A1"] },
+    { id: "D1b", stage: "derive", sec: "2b", c: 5, r: 9, title: "n_domains_g", sub: "cross-check count from g(r)", tag: "logged", dashed: true,
+      calc: "A domain count estimated from g(r), for comparison only. It is logged and stored but not used.",
+      eq: "κ = 1 / ∫₀^r_domain (g(r) − 1)·2πr dr\nn_domains_g = κ × mask area",
+      code: { fn: "estimate_n_domains_from_g", at: "hmt_v3/simulate.py#L1895", now: "hmt_v3/measure.py:300" }, deps: [["M5"], ["D1"], ["SRC", "ref"]] },
+    { id: "D2", stage: "derive", sec: "2b", c: 1, r: 10, title: "rdf_dom", sub: "RDF with rings beyond r_domain set to 0",
+      calc: "The RDF truncated at r_domain. Beyond that radius the neighbour signal reflects how domains are arranged, not the shape of one domain.",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2213", now: "hmt_v3/simulate.py:630" }, deps: [["M2"], ["D1"]] },
+    { id: "D7", stage: "derive", sec: "2b", c: 4, r: 10, title: "min_dist", sub: "minimum seed spacing", tag: "inhibition only", dashed: true,
+      calc: "Used only when SEED_PLACEMENT is inhibition. If L(r) − r drops below 0 beyond r_domain, min_dist is the r where it is lowest.",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2242", now: "hmt_v3/simulate.py:658" }, deps: [["M5"], ["D1"]] },
+    { id: "D3", stage: "derive", sec: "2b", c: 1, r: 11, title: "n_locs per domain", sub: "Σ rdf_dom × ring area",
+      calc: "The average number of excess neighbours within r_domain, at least 1.",
+      eq: "n_locs = Σᵢ rdf_dom[i] × ring_area[i]",
+      code: { fn: "extract_n_locs_from_rdf", at: "hmt_v3/simulate.py#L2218", now: "hmt_v3/simulate.py:635" }, deps: [["D2"]], weak: ["A4"] },
+    { id: "D4", stage: "derive", sec: "2b", c: 2.5, r: 12, title: "Noise-free reference", sub: "its own simulation: N / n_locs domains → g_ref", tag: "separate sim", dashed: true,
+      calc: "A complete second simulated nucleus, built only to measure g_ref. It has N / n_locs domains (N = the source cell's localization count) placed independently in proportion to the radial profile, built the same way as the real domains, and no noise. Its pair correlation is g_ref.",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2223", now: "hmt_v3/simulate.py:641" }, deps: [["D3"], ["M3"], ["SRC", "ref"], ["M1", "ref"], ["M4", "ref"], ["D2", "ref"]] },
+    { id: "D5", stage: "derive", sec: "2b", c: 3.5, r: 13, title: "Noise fraction", sub: "fit φ;  f_noise = 1 − φ",
+      calc: "Least-squares slope through the origin over bins with r ≤ r_domain where g_ref − 1 is above 20 % of its maximum. φ is clipped to [0, 1]. NOISE_FRACTION in the config would override it. The older local-density estimate is stored as f_noise_heuristic but not used.",
+      eq: "g_real(r) − 1 = φ × (g_ref(r) − 1)\nf_noise = 1 − φ",
+      code: { fn: "estimate_noise_fraction_from_pcf", at: "hmt_v3/simulate.py#L1942", now: "hmt_v3/measure.py:347" }, deps: [["D4"], ["D1"], ["M5", "ref"]] },
+    { id: "D6", stage: "derive", sec: "2b", c: 1, r: 14, title: "n_domains", sub: "round((1 − f_noise) × N / n_locs)",
+      calc: "The number of domains in the calibration nucleus.",
+      eq: "n_domains = round((1 − f_noise) × N / n_locs)",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2237", now: "hmt_v3/simulate.py:654" }, deps: [["D3"], ["D5"], ["SRC", "ref"]], weak: ["A4"] },
+
+    { id: "S1", stage: "seed", sec: "2b", c: 4, r: 15, title: "Thomas fit", sub: "σ and κ_p from ln[(g − 1)/φ²] vs r²", tag: "decision", decision: true,
+      calc: "For r between r_domain and 500 nm where the excess is positive, fit a straight line against r². σ is the spread of domain centres around their parent, κ_p the parent density. Dividing by φ² undoes the dilution by noise.\nIf fewer than 2 bins qualify or the slope is not negative, the fit fails and seeds are placed by radial Poisson instead.",
+      eq: "ln[(g_real − 1)/φ²] = ln A − r²/(4σ²)\nκ_p = 1 / (4π A σ²)",
+      code: { fn: "fit_thomas_parameters", at: "hmt_v3/simulate.py#L1993", now: "hmt_v3/measure.py:398" }, deps: [["D5"], ["M5", "ref"], ["D1", "ref"]] },
+    { id: "S2", stage: "seed", sec: "2b", c: 4, r: 16, title: "Parents", sub: "round(κ_p × mask area), placed by radial profile",
+      calc: "n_parents = round(κ_p × mask area). Each parent goes into a pixel chosen with probability proportional to its band's radial-profile value, at a uniform random position inside the 50 nm pixel. No spacing rule.",
+      code: { fn: "place_seeds_thomas", at: "hmt_v3/simulate.py#L2045", now: "hmt_v3/simulate.py:303" }, deps: [["S1", null, "fit ok"], ["M1", "ref"], ["SRC", "ref"]] },
+    { id: "SP", stage: "seed", sec: "2b", c: 2, r: 16, title: "Poisson seeds", sub: "n_domains placed independently by profile", tag: "fallback", dashed: true,
+      calc: "Used only if the Thomas fit fails. n_domains seeds, each in a pixel chosen in proportion to the radial profile, independent of each other.",
+      code: { fn: "place_seeds_matched", at: "hmt_v3/simulate.py#L1706", now: "hmt_v3/simulate.py:201" }, deps: [["S1", null, "fit fails"], ["D6", "opt"], ["M1", "ref"]] },
+    { id: "S3", stage: "seed", sec: "2b", c: 4, r: 17, title: "Offspring = seeds", sub: "Poisson(n_domains / n_parents) per parent",
+      calc: "Each parent gets Poisson(n_domains / n_parents) offspring. Each offspring's xy is its parent's xy plus a Gaussian offset with standard deviation σ on each axis. Offspring outside the mask are discarded, so slightly fewer than n_domains seeds remain.",
+      code: { fn: "place_seeds_thomas", at: "hmt_v3/simulate.py#L2045", now: "hmt_v3/simulate.py:303" }, deps: [["S2"], ["D6", "ref"], ["S1", "ref"]], weak: ["A6"] },
+    { id: "S4", stage: "seed", sec: "2b", c: 3, r: 18, title: "Seed z", sub: "drawn from the z pool of the seed's band",
+      calc: "Each seed's z is drawn at random from the real z values in its own band, or from the whole-nucleus pool for sparse bands.",
+      code: { fn: "place_seeds_thomas", at: "hmt_v3/simulate.py#L2045", now: "hmt_v3/simulate.py:303" }, deps: [["S3"], ["SP", "opt"], ["M4", "ref"]], weak: ["A5", "A6"] },
+
+    { id: "B", stage: "build", sec: "2b", c: 2, r: 19, title: "Domain localizations", sub: "Poisson(n_locs) points per seed, shaped by rdf_dom and ADF",
+      calc: "For every seed:\nPoint count: Poisson(n_locs).\nDistance from seed: ring i chosen with probability ∝ rdf_dom[i] × ring_area[i]; r = (i + U) × 10 nm.\nDirection: uniform on [0, 2π).\nz: bin j chosen ∝ ADF[j]; z = seed z ± (j + U) × 10 nm, random sign.\nLabel: the domain's index. (U is uniform on [0, 1).)",
+      code: { fn: "spawn_nanodomains", at: "hmt_v3/simulate.py#L472", now: "hmt_v3/simulate.py:370" }, deps: [["S4"], ["D2", "ref"], ["D3", "ref"], ["M3", "ref"]], weak: ["A2", "A3", "A8"] },
+    { id: "N", stage: "build", sec: "2b", c: 4, r: 19, title: "Noise localizations", sub: "f_noise × N points, label −1",
+      calc: "f_noise × N points.\nxy: a pixel chosen uniformly from bands whose radial profile is above 0 (support mode), then a random position inside it.\nz: drawn from the whole-nucleus z pool.\nLabel: −1.",
+      code: { fn: "add_noise_locs", at: "hmt_v3/simulate.py#L415", now: "hmt_v3/simulate.py:432" }, deps: [["D5", "ref"], ["SRC", "ref"], ["M1", "ref"], ["M4", "ref"]], weak: ["A7"] },
+
+    { id: "OUT", stage: "output", sec: "2b", c: 3, r: 20, title: "Simulated nucleus", sub: "x, y, z + true label, about N points",
+      calc: "Domain localizations plus noise: about (1 − f_noise) × N + f_noise × N, roughly the source cell's total. Every point carries its true domain label (−1 for noise). Saved as <ch>_simulated.parquet.",
+      code: { fn: "generate_nucleus", at: "hmt_v3/simulate.py#L2110", now: "hmt_v3/simulate.py:523" }, deps: [["B"], ["N"]], weak: ["A1"] },
+    { id: "QC", stage: "output", sec: "2b", c: 5, r: 20, title: "QC plot + JSON block", sub: "g and L, sim vs real · generate_nucleus fields",
+      calc: "<ch>_pair_correlation.png overlays the simulation's g(r) and L(r), noise included, on the source cell's. They should lie on top of each other.\nThe generate_nucleus block in the calibration JSON stores n_domains, n_domains_g, r_domain, the placement used, Thomas σ and κ_p, f_noise, f_noise_heuristic and n_locs.",
+      code: { fn: "calibrate_channel", at: "drivers/02_calibrate.py#L156" }, deps: [["OUT"], ["M5", "ref"], ["D1b", "ref"]] },
+
+    { id: "C1", stage: "calib", sec: "2c", c: 3, r: 21, title: "5 µm crop", sub: "density closest to the nucleus mean",
+      calc: "DBSCAN over a whole nucleus for every parameter pair would be too slow, so the search runs on a square crop. Every window position on the 50 nm grid that is at least 95 % inside the mask is scored by its density (localizations ÷ in-mask area); the window closest to the whole simulated nucleus's mean density wins, so the crop is measured the way a real cell is in step 03. If none fits, the size shrinks by 20 % at a time down to 1.5 µm. The crop's in-mask area is the density denominator for the rest of step 02.",
+      code: { fn: "choose_crop", at: "drivers/02_calibrate.py#L53" }, deps: [["OUT"], ["SRC", "ref"], ["CFG", "ref"]] },
+    { id: "C2", stage: "calib", sec: "2c", c: 5, r: 21, title: "Domain overlap", sub: "true domains closer than 2 × domain scale", tag: "logged", dashed: true,
+      calc: "For each true domain in the crop: the 3D distance to the nearest other domain centroid minus 2 × the domain scale. Negative means the two overlap. The fraction overlapping is logged and stored as gt_frac_domains_overlapping; a high value means no DBSCAN setting can separate the domains.",
+      code: { fn: "diagnose_domain_packing", at: "hmt_v3/simulate.py#L1616", now: "hmt_v3/calibrate.py:375" }, deps: [["C1"]], weak: ["A1"] },
+    { id: "T1", stage: "calib", sec: "2d", c: 3, r: 22, title: "Ten densities", sub: "random subsets: 1.0, 0.9 … 0.1",
+      calc: "The crop is randomly subsampled without replacement to each fraction of its localizations. Domain and noise points are thinned alike, so every fraction has the same domains and the same noise fraction, with fewer points. A fraction's density = its count ÷ the crop's in-mask area.",
+      code: { fn: "calibrate_channel", at: "drivers/02_calibrate.py#L171" }, deps: [["C1"], ["CFG", "ref"]], weak: ["B9"] },
+
+    { id: "E1", stage: "calib", sec: "2e", c: 1, r: 23, title: "gt_target", sub: "mean 2 × p75 radius of the true domains",
+      calc: "Computed once, on fraction 1.0. For every true domain with at least 10 points: 2 × the 75th percentile of xy distance from the domain's centroid. gt_target is the mean over domains.",
+      eq: "d = 2 × p75(|xy − centroid|)\ngt_target = mean d",
+      code: { fn: "calculate_geometric_gt_target", at: "hmt_v3/simulate.py#L650", now: "hmt_v3/measure.py:452" }, deps: [["T1", null, "fraction 1.0"]], weak: ["B4", "B6"] },
+    { id: "E2", stage: "calib", sec: "2e", c: 3, r: 24, title: "Size cost", sub: "| mean cluster size − gt_target |",
+      calc: "Runs DBSCAN and sizes every cluster with the same p75 diameter. Clusters under 10 points count as 20 nm (penalizes fragments); clusters wider than 4 × gt_target count as 20 × gt_target (penalizes merged domains). The cost is 10⁵ if DBSCAN finds no clusters.",
+      eq: "cost = | mean cluster size − gt_target |",
+      code: { fn: "domain_size_cost", at: "hmt_v3/simulate.py#L695", now: "hmt_v3/calibrate.py:42" }, deps: [["E1"], ["T1", null, "each fraction"]], weak: ["B1", "B5"] },
+    { id: "E3", stage: "calib", sec: "2e", c: 3, r: 25, title: "Best pair per fraction", sub: "coarse grid → bounded minimizer, 14 min_samples",
+      calc: "For every fraction and every min_samples in 5, 10 … 70: try eps = 10, 25 … 220 nm, then refine with scipy's bounded scalar minimizer (tolerance 0.2 nm) within ±15 nm of the best, kept inside 10–225 nm. DBSCAN runs in 3D on every point, noise included. Each fraction keeps its lowest-cost (eps, min_samples).",
+      code: { fn: "optimize_dbscan_size_matching", at: "hmt_v3/simulate.py#L1237", now: "hmt_v3/calibrate.py:123" }, deps: [["E2"], ["CFG", "ref"]], weak: ["B2", "B3", "B6", "B10"] },
+    { id: "E4", stage: "calib", sec: "2e", c: 5, r: 25, title: "Keep fraction?", sub: "best cost under 50 nm", tag: "decision", decision: true,
+      calc: "A fraction enters the curve fit only if its best cost is under 50 nm (SIZE_COST_THRESHOLD_NM). Every fraction's result, passed or not, is kept in the all_* fields of the calibration JSON.",
+      code: { fn: "optimize_dbscan_size_matching", at: "hmt_v3/simulate.py#L1237", now: "hmt_v3/calibrate.py:123" }, deps: [["E3"]] },
+
+    { id: "F1", stage: "calib", sec: "2f", c: 3, r: 26, title: "Calibration curves", sub: "eps = a·ρ^b · min_samples = m·ρ + c",
+      calc: "Over the fractions that passed: a straight-line fit of log₁₀ eps on log₁₀ ρ, and a linear fit of min_samples on ρ (ρ in localizations per nm²). Saved as eps_coef (a), eps_exp (b), min_samples_slope (m), min_samples_intercept (c) and both R². The calibration counts as converged only if at least 2 fractions passed; step 03 refuses one that did not.",
+      eq: "eps = a × ρ^b\nmin_samples = m × ρ + c",
+      code: { fn: "optimize_dbscan_size_matching", at: "hmt_v3/simulate.py#L1437", now: "hmt_v3/calibrate.py:319" }, deps: [["E4", null, "passed"]], weak: ["B2"] },
+
+    { id: "G1", stage: "calib", sec: "2g", c: 1, r: 27, title: "Fixed vs corrected", sub: "size-vs-density R², Fig. 4b/c",
+      calc: "Clusters every fraction twice: with the parameters the curves give at fraction 1.0's density (fixed), and with the parameters at each fraction's own density (corrected; eps ≥ 10 nm, min_samples ≥ 3). For nanodomains with at least 10 points it takes the mean bounding-box size and regresses it on density. Corrected sizes should stay flat (low R²); fixed sizes drift. Saved as <ch>_size_vs_density.csv and .png and as size_vs_density_r2.",
+      code: { fn: "size_vs_density_check", at: "drivers/02_calibrate.py#L105" }, deps: [["F1"], ["T1", "ref"]], weak: ["B1", "B4"] },
+    { id: "J", stage: "output", sec: "2g", c: 4, r: 27, title: "<ch>_calibration.json", sub: "curves, every fraction, generate_nucleus block",
+      calc: "calibration/<key>/<ch>_calibration.json, which step 03 reads:\nthe curves (eps_coef, eps_exp, min_samples_slope, min_samples_intercept, both R²);\nper fraction that passed and for every fraction (densities, best eps and min_samples, size errors);\nthe setup (gt_target, calibration_area_nm2, crop_bounds_nm, use_z, density_fractions, min_samples_range, domain_scale_nm, source_cell);\ndiagnostics (the generate_nucleus block, gt_frac_domains_overlapping, converged, size_vs_density_r2).",
+      code: { fn: "calibrate_channel", at: "drivers/02_calibrate.py#L186" }, deps: [["F1"], ["G1"], ["QC", "ref"], ["C2", "ref"], ["E4", "ref"]] },
+
+    { id: "P1", stage: "apply", sec: "03", c: 2, r: 28, title: "Each cell's density", sub: "masked localizations ÷ mask area",
+      calc: "For every cell and mark: pick the calibration for the cell's key (its condition in per_condition mode, the cell itself in per_cell, or pooled). The step stops with an error if that file is missing, was fit with a different USE_Z, or did not converge.\nρ = the cell's masked localizations for this mark ÷ mask area, the definition from step 01 and the crop.",
+      code: { fn: "cluster_cell", at: "drivers/03_cluster.py#L25" }, deps: [["Q8", "ref"]] },
+    { id: "P2", stage: "apply", sec: "03", c: 3, r: 29, title: "Density-corrected DBSCAN", sub: "parameters read off the curves, 3D",
+      calc: "Evaluates the curves at the cell's density with the floors MIN_EPS_NM and MIN_MIN_SAMPLES, then runs one DBSCAN over the whole nucleus in 3D; unclustered points get label −1. extrapolated is true when ρ is more than 5 % outside the densities the curves were fit on; the cell is still clustered and kept.",
+      eq: "eps = max(a × ρ^b, 10 nm)\nmin_samples = max(round(m × ρ + c), 3)",
+      code: { fn: "cluster_dbscan_density_corrected", at: "hmt_v3/cluster.py#L54", now: "hmt_v3/cluster.py:59" }, deps: [["P1"], ["J"]], weak: ["B6", "B7", "B11"] },
+    { id: "P3", stage: "apply", sec: "03", c: 3, r: 30, title: "Nanodomains", sub: "size, count, centroid per domain",
+      calc: "One row per cluster with at least 4 points and a valid 2D hull: bb_size_2D (mean of the xy bounding-box width and height, the manuscript's nanodomain size), geometric_diameter_2D (the p75 statistic the calibration targeted), bb_size_3D, hull area and volume, 2D and 3D density, point count and centroid.",
+      code: { fn: "calculate_nanodomain_characteristics", at: "hmt_v3/cluster.py#L166", now: "hmt_v3/cluster.py:111" }, deps: [["P2"]], weak: ["B4", "B5"] },
+    { id: "P4", stage: "output", sec: "03", c: 3, r: 31, title: "Per-cell cluster files", sub: "clustered parquet · nanodomains.csv · cluster.json",
+      calc: "cells/<cell_id>/: <ch>_clustered.parquet (localizations with cluster_label), <ch>_nanodomains.csv (one row per nanodomain), and cluster.json with the density, eps, min_samples, calibrated density range, extrapolation flag, nanodomain count, fraction of localizations clustered, mean and median bounding-box size and mean diameter for each mark.",
+      code: { fn: "cluster_cell", at: "drivers/03_cluster.py#L46" }, deps: [["P3"], ["P2", "ref"]] },
+
+    { id: "R1", stage: "analyze", sec: "04", c: 1, r: 32, title: "Radial profiles", sub: "each mark's density in the 100 bands",
+      calc: "For each mark: masked localizations per pixel in each radial band (the same function as M1), reported as density per µm² and normalized to the mark's densest band. radius_pct = band + 0.5, so 0.5 % is the core and 99.5 % the rim (Fig. 3c, 6c/f).",
+      code: { fn: "radial_profile → extract_radial_density_profile", at: "drivers/04_spatial.py#L26" }, deps: [["Q8", "ref"]] },
+    { id: "R2", stage: "analyze", sec: "04", c: 3, r: 32, title: "SNCR curves", sub: "self ÷ other-mark neighbours around each nanodomain",
+      calc: "Around every nanodomain centroid of one mark, in 2D disks of r = 10, 20 … 300 nm, count same-mark (self) and other-mark (nonself) neighbours. Done for both reference marks and two neighbour definitions:\nlocalizations (primary): the two marks' clustered localizations; the reference domain's own localizations count as self.\nnanodomains: the other domains' centroids; the reference domain is excluded.\nSummaries per r: mean_ratio (mean of each domain's self ÷ nonself, over domains with at least one nonself neighbour; the manuscript's SNCR), pooled_ratio (Σ self ÷ Σ nonself), chance_ratio (the whole-nucleus abundance ratio) and frac_no_nonself.",
+      code: { fn: "nanodomain_sncr", at: "hmt_v3/postprocess.py#L264", now: "hmt_v3/postprocess.py:203" }, deps: [["P4"], ["CFG", "ref"]] },
+    { id: "R3", stage: "analyze", sec: "04", c: 3, r: 33, title: "SNCR decay rate", sub: "fit A·e^(k·r) + C from the peak, r ≤ 200 nm",
+      calc: "For each reference mark and neighbour definition, the mean_ratio curve is fitted from its maximum outward, over r ≤ 200 nm, with k bounded to [−1, 0]. k (1/nm, negative = decaying) is the per-cell statistic of Fig. S3b/c; it does not depend on the curve's scale. NaN if fewer than 4 points remain or the fit fails.",
+      eq: "y(r) = A × e^(k·r) + C",
+      code: { fn: "fit_exponential_decay", at: "hmt_v3/postprocess.py#L357", now: "hmt_v3/postprocess.py:296" }, deps: [["R2"]] },
+    { id: "R4", stage: "output", sec: "04", c: 2, r: 34, title: "Per-cell spatial files", sub: "radial_profile · sncr · sncr_fit · spatial.png",
+      calc: "cells/<cell_id>/: radial_profile.csv, sncr.csv (every curve), sncr_fit.csv (k, A, C, R² per reference mark and neighbour definition) and spatial.png (the primary SNCR curves normalized to their maximum, and both radial profiles).",
+      code: { fn: "main", at: "drivers/04_spatial.py#L111" }, deps: [["R1"], ["R3"]] },
+
+    { id: "K1", stage: "analyze", sec: "05", c: 2.5, r: 35, title: "Pool cells", sub: "one row per cell, plus every domain and curve",
+      calc: "Every cell in the manifest with preprocess.json, cluster.json and sncr_fit.csv; cells missing any of them are left out with a warning. Per cell: localization counts, me3:ac ratio, calibration key, and for each mark the nanodomain count, mean and median bounding-box size, mean diameter, fraction clustered, density, eps, min_samples, extrapolation flag and SNCR decay rate (primary neighbour definition). Also concatenates every nanodomain, SNCR curve, fit and radial profile.",
+      code: { fn: "collect", at: "drivers/05_compare.py#L27" }, deps: [["R4"], ["P4", "ref"], ["Q8", "ref"]], weak: ["B11"] },
+    { id: "K2", stage: "analyze", sec: "05", c: 1, r: 36, title: "Condition statistics", sub: "each condition vs NT: Mann–Whitney, Welch t",
+      calc: "For me3:ac ratio and, per mark, mean bounding-box size, nanodomain count, SNCR decay rate and fraction clustered: each condition against CONDITION_ORDER[0] (NT). Reports n, mean, SD and median per group and the Mann–Whitney U and Welch t p-values (NaN with fewer than 2 cells in a group). The log also counts (cell, mark) pairs clustered outside their calibrated range.",
+      code: { fn: "compare_conditions", at: "drivers/05_compare.py#L61" }, deps: [["K1"]], weak: ["B8"] },
+    { id: "K3", stage: "analyze", sec: "05", c: 4, r: 36, title: "Condition figures", sub: "Fig. 6b/c/e/f/g/h, Fig. S3a–c",
+      calc: "fig6g_nanodomain_size and fig6h_nanodomain_count: per-cell means as dots by condition and mark, with Mann–Whitney stars. figS3_ratio_and_decay: me3:ac ratio and both decay rates. fig6_sncr_by_condition: mean ± SEM of the primary SNCR curves, each cell normalized to its maximum (6b/e). fig6_radial_by_condition: mean ± SEM of the normalized radial profiles (6c/f). Each dot is one nucleus.",
+      code: { fn: "main", at: "drivers/05_compare.py#L140" }, deps: [["K1"], ["K2"]], weak: ["B4"] },
+    { id: "K4", stage: "output", sec: "05", c: 2.5, r: 37, title: "results/", sub: "summary tables, stats.csv, five figures",
+      calc: "per_cell_summary.csv, nanodomains_all.csv, sncr_all.csv, sncr_fits_all.csv, radial_profiles_all.csv, stats.csv, and the five condition figures.",
+      code: { fn: "main", at: "drivers/05_compare.py#L125" }, deps: [["K2"], ["K3"]] }
+  ];
+
+  const byId = Object.fromEntries(NODES.map(n => [n.id, n]));
+  const isRef = d => d[1] === "ref";
+  const EDGES = [];
+  NODES.forEach(n => n.deps.forEach(d => {
+    if (!byId[d[0]]) { console.warn("missing dep", d[0], "for", n.id); return; }
+    if (!isRef(d)) EDGES.push({ from: d[0], to: n.id, opt: d[1] === "opt", label: d[2] || null });
+  }));
+
+  // Geometry
+  const GUTTER = 124, COLW = 200, NODEW = 182, NODEH = 86, ROWH = 116, TOP = 18, COLS = 6;
+  const ROWS = Math.max(...NODES.map(n => n.r)) + 1;
+  const W = GUTTER + COLS * COLW + 16;
+  const H = TOP + ROWS * ROWH;
+  NODES.forEach(n => {
+    n.x = GUTTER + n.c * COLW + (COLW - NODEW) / 2;
+    n.y = TOP + n.r * ROWH;
+    n.cx = n.x + NODEW / 2;
+  });
+
+  const NS = "http://www.w3.org/2000/svg";
+  const XH = "http://www.w3.org/1999/xhtml";
+  const svg = document.getElementById("chart");
+  const pane = document.getElementById("pane");
+  const detail = document.getElementById("detail");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const el = (tag, attrs, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // Markers
+  const defs = el("defs", {}, svg);
+  [["a-def", "var(--edge)"], ["a-up", "var(--up)"], ["a-down", "var(--down)"]].forEach(([id, col]) => {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", style: `fill:${col}` }, m);
+  });
+
+  // Bands
+  const gBands = el("g", {}, svg);
+  BANDS.forEach((b, i) => {
+    const y = TOP + b.r0 * ROWH - 12;
+    b.y = y;
+    el("rect", { x: 0, y, width: W, height: (b.r1 - b.r0 + 1) * ROWH, style: `fill:${i % 2 ? "var(--surface)" : "var(--band)"}` }, gBands);
+    el("text", { x: 16, y: y + 28, class: "band-key" }, gBands).textContent = b.key;
+    el("text", { x: 16, y: y + 46, class: "band-label" }, gBands).textContent = b.label;
+  });
+
+  // Ports
+  const outs = {}, ins = {};
+  EDGES.forEach(e => { (outs[e.from] ||= []).push(e); (ins[e.to] ||= []).push(e); });
+  const spread = (list, keyFn, prop) => {
+    list.sort((a, b) => keyFn(a) - keyFn(b));
+    const k = list.length;
+    const span = Math.min(NODEW * 0.72, Math.max(0, (k - 1) * 22));
+    list.forEach((e, i) => { e[prop] = k === 1 ? 0 : -span / 2 + (span * i) / (k - 1); });
+  };
+  Object.values(outs).forEach(l => spread(l, e => byId[e.to].cx, "ox"));
+  Object.values(ins).forEach(l => spread(l, e => byId[e.from].cx, "ix"));
+
+  // Edges
+  const gEdges = el("g", {}, svg);
+  EDGES.forEach(e => {
+    const a = byId[e.from], b = byId[e.to];
+    let d;
+    if (a.r === b.r) {
+      const ltr = a.cx < b.cx;
+      const x1 = ltr ? a.x + NODEW : a.x, x2 = ltr ? b.x - 2 : b.x + NODEW + 2;
+      const y = a.y + NODEH / 2;
+      d = `M${x1},${y} L${x2},${y}`;
+      e.mid = { x: (x1 + x2) / 2, y: y - 8 };
+    } else {
+      const x1 = a.cx + e.ox, y1 = a.y + NODEH;
+      const x2 = b.cx + e.ix, y2 = b.y - 2;
+      const dy = Math.max(28, Math.min(80, (y2 - y1) / 2));
+      d = `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`;
+      e.mid = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+    }
+    e.path = el("path", { d, class: "edge" + (e.opt ? " opt" : ""), "marker-end": "url(#a-def)" }, gEdges);
+  });
+  const gLabels = el("g", {}, svg);
+  EDGES.filter(e => e.label).forEach(e => {
+    el("text", { x: e.mid.x, y: e.mid.y + 4, "text-anchor": "middle", class: "edge-label" }, gLabels).textContent = e.label;
+  });
+
+  // Nodes
+  const gNodes = el("g", {}, svg);
+  NODES.forEach(n => {
+    const g = el("g", { class: "node" + (n.dashed ? " dashed" : "") + (n.decision ? " decision" : ""), tabindex: "0", role: "button", "aria-label": `${n.id} ${n.title}` }, gNodes);
+    g.style.setProperty("--stage", STAGES[n.stage].color);
+    const fo = el("foreignObject", { x: n.x, y: n.y, width: NODEW, height: NODEH }, g);
+    const box = document.createElementNS(XH, "div");
+    box.className = "box";
+    const refs = n.deps.filter(isRef).map(d => d[0]);
+    const weak = n.weak || [];
+    box.innerHTML = `<div class="top"><span class="id"></span><span class="ttl"></span>${n.tag ? `<span class="tag"></span>` : ""}</div><div class="sub"></div>` +
+      (refs.length || weak.length ? `<div class="foot">${refs.length ? `<span class="refs"></span>` : ""}${weak.length ? `<span class="weak"></span>` : ""}</div>` : "");
+    box.querySelector(".id").textContent = n.id;
+    box.querySelector(".ttl").textContent = n.title;
+    box.querySelector(".sub").textContent = n.sub;
+    if (n.tag) box.querySelector(".tag").textContent = n.tag;
+    if (refs.length) box.querySelector(".refs").textContent = "from " + refs.join(" · ");
+    if (weak.length) box.querySelector(".weak").textContent = weak.join(" ");
+    fo.appendChild(box);
+    n.g = g;
+    g.addEventListener("click", () => select(n.id, false));
+    g.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id, false); } });
+  });
+
+  // Toolbar: step jumps and legend
+  const jump = document.getElementById("jump");
+  jump.innerHTML = `<span>Go to</span>`;
+  const seenKeys = new Set();
+  BANDS.forEach(b => {
+    if (seenKeys.has(b.key)) return;
+    seenKeys.add(b.key);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = b.key;
+    btn.setAttribute("aria-label", `Go to ${b.key === "in" ? "input data" : b.key}`);
+    btn.addEventListener("click", () => pane.scrollTo({ top: Math.max(0, b.y * scale - 8), behavior: "smooth" }));
+    jump.appendChild(btn);
+  });
+  document.getElementById("legend").innerHTML =
+    Object.values(STAGES).map(s => `<span><i style="background:${s.color}"></i>${s.short}</span>`).join("") +
+    `<span><i class="ln" style="border-color:var(--edge);border-top-style:dashed"></i>conditional</span>` +
+    `<span><span class="mono">from X</span>input from further up</span>` +
+    `<span><span class="wk">A2</span>weak point</span>`;
+
+  // Selection
+  const parents = id => byId[id].deps.map(d => d[0]).filter(p => byId[p]);
+  const children = id => NODES.filter(n => n.deps.some(d => d[0] === id)).map(n => n.id);
+  function ancestors(id) {
+    const seen = new Set(), stack = [...parents(id)];
+    while (stack.length) { const p = stack.pop(); if (!seen.has(p)) { seen.add(p); stack.push(...parents(p)); } }
+    return seen;
+  }
+  let current = null;
+
+  function chip(id, cls) {
+    return `<button type="button" class="chip ${cls}" data-go="${id}"><b>${id}</b>${esc(byId[id].title)}</button>`;
+  }
+  function codeHtml(c) {
+    const label = c.at.replace("#L", ":");
+    let s = `<code>${esc(c.fn)}</code> · <a href="${BASE}${c.at}" target="_blank" rel="noopener">${esc(label)}</a> at 740d91b`;
+    if (c.now) s += `<br><span class="empty">After the module split: ${esc(c.now)}</span>`;
+    return s;
+  }
+  function weakHtml(ids) {
+    return `<div class="weak-list">${ids.map(w => `<a href="${PIPE}#${w}" target="_blank" rel="noopener"><b>${w}</b><span>${esc(WEAK[w][1])}</span><span class="sev">${WEAK[w][0]}</span></a>`).join("")}</div>`;
+  }
+  const EMPTY = `<p class="empty">Click any box in the chart, or any card below, to see what it calculates, what it needs, what uses it, and any weak points the pipeline page lists for it.</p>`;
+
+  function select(id, scroll) {
+    if (current === id && !scroll) { clear(); return; }
+    current = id;
+    const n = byId[id];
+    const anc = ancestors(id);
+    const kids = new Set(children(id));
+    svg.classList.add("has-sel");
+    NODES.forEach(m => {
+      m.g.classList.toggle("sel", m.id === id);
+      m.g.classList.toggle("anc", anc.has(m.id));
+      m.g.classList.toggle("child", kids.has(m.id));
+    });
+    EDGES.forEach(e => {
+      const up = (e.to === id || anc.has(e.to)) && anc.has(e.from);
+      const down = e.from === id;
+      e.path.classList.toggle("up", up);
+      e.path.classList.toggle("down", down);
+      e.path.setAttribute("marker-end", up ? "url(#a-up)" : down ? "url(#a-down)" : "url(#a-def)");
+    });
+    const drawn = n.deps.filter(d => !isRef(d)).map(d => d[0]);
+    const refd = n.deps.filter(isRef).map(d => d[0]);
+    const sec = SECTIONS[n.sec];
+    detail.innerHTML =
+      `<div class="d-head"><span class="d-id">${n.id}</span><span class="d-title">${esc(n.title)}</span><button type="button" class="close" id="close">Clear</button></div>` +
+      `<div class="k">How it is computed</div><div class="calc">${esc(n.calc)}</div>` +
+      (n.eq ? `<div class="eq">${esc(n.eq)}</div>` : "") +
+      `<div class="k">Inputs</div>` + (drawn.length || refd.length
+        ? `<div class="chips">${drawn.map(d => chip(d, "up")).join("")}${refd.map(d => chip(d, "ref")).join("")}</div>`
+        : `<div class="empty">None. This is a starting input.</div>`) +
+      `<div class="k">Used by</div>` + (kids.size ? `<div class="chips">${[...kids].map(d => chip(d, "down")).join("")}</div>` : `<div class="empty">Nothing further in this chart.</div>`) +
+      (n.weak && n.weak.length ? `<div class="k">Weak points on the pipeline page</div>${weakHtml(n.weak)}` : "") +
+      `<div class="k">Read more</div><a href="${PIPE}#${sec[0]}" target="_blank" rel="noopener">Pipeline page · ${esc(sec[1])}</a>` +
+      `<div class="k">Code</div><div>${codeHtml(n.code)}</div>`;
+    detail.querySelector("#close").addEventListener("click", clear);
+    if (scroll) scrollToNode(n);
+  }
+  function clear() {
+    current = null;
+    svg.classList.remove("has-sel");
+    NODES.forEach(n => n.g.classList.remove("sel", "anc", "child"));
+    EDGES.forEach(e => { e.path.classList.remove("up", "down"); e.path.setAttribute("marker-end", "url(#a-def)"); });
+    detail.innerHTML = EMPTY;
+  }
+  detail.addEventListener("click", ev => {
+    const b = ev.target.closest("[data-go]");
+    if (b) { current = null; select(b.dataset.go, true); }
+  });
+
+  // Zoom
+  const zv = document.getElementById("zoom-val");
+  let scale = 1;
+  function setScale(s) {
+    scale = Math.max(0.4, Math.min(2, s));
+    svg.style.width = (W * scale) + "px";
+    svg.style.height = (H * scale) + "px";
+    zv.textContent = Math.round(scale * 100) + "%";
+  }
+  function scrollToNode(n) {
+    pane.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    pane.scrollTo({ left: n.cx * scale - pane.clientWidth / 2, top: (n.y + NODEH / 2) * scale - pane.clientHeight / 2, behavior: "smooth" });
+  }
+  document.getElementById("zoom-in").addEventListener("click", () => setScale(scale + 0.1));
+  document.getElementById("zoom-out").addEventListener("click", () => setScale(scale - 0.1));
+  document.getElementById("zoom-reset").addEventListener("click", () => setScale(1));
+  document.getElementById("zoom-fit").addEventListener("click", () => setScale((pane.clientWidth - 2) / W));
+  setScale(pane.clientWidth < 900 ? 0.6 : 1);
+
+  // List
+  const body = document.getElementById("list-body");
+  Object.entries(STAGES).forEach(([key, st]) => {
+    const items = NODES.filter(n => n.stage === key);
+    if (!items.length) return;
+    const sec = document.createElement("div");
+    sec.className = "stage";
+    sec.style.setProperty("--stage", st.color);
+    sec.innerHTML = `<h3><i></i>${st.name}</h3><div class="cards"></div>`;
+    const cards = sec.querySelector(".cards");
+    items.forEach(n => {
+      const c = document.createElement("article");
+      c.className = "card";
+      c.tabIndex = 0;
+      const deps = n.deps.map(d => d[0]);
+      const label = n.code.at.replace("#L", ":");
+      c.innerHTML =
+        `<div class="c-head"><span class="c-id">${n.id}</span><span class="c-title">${esc(n.title)}</span></div>` +
+        `<div class="c-calc">${esc(n.calc)}</div>` +
+        (n.eq ? `<div class="c-eq">${esc(n.eq)}</div>` : "") +
+        `<div class="c-deps">${deps.length ? "Needs: " + deps.map(d => `<code>${d}</code>`).join(" ") : "Starting input"}` +
+        (n.weak && n.weak.length ? ` · weak points: ${n.weak.map(w => `<a class="c-weak" href="${PIPE}#${w}" target="_blank" rel="noopener">${w}</a>`).join(" ")}` : "") +
+        ` · <a href="${BASE}${n.code.at}" target="_blank" rel="noopener">${esc(label)}</a>${n.code.now ? ` (now ${esc(n.code.now)})` : ""}</div>`;
+      c.addEventListener("click", ev => { if (ev.target.closest("a")) return; current = null; select(n.id, true); });
+      c.addEventListener("keydown", ev => { if (ev.key === "Enter") { current = null; select(n.id, true); } });
+      cards.appendChild(c);
+    });
+    body.appendChild(sec);
+  });
+
+  clear();
+})();
+</script>
+</body></html>

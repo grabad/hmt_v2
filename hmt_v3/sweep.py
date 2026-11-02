@@ -1,17 +1,23 @@
 """
-Parameter-sweep, density-subsampling and perturbation experiments for the toy
-centroid model in ``hmt_v3.postprocess``.
+Toy two-mark centroid model for validating the spatial metrics in
+``hmt_v3.postprocess``: synthetic me3 / ac nanodomain centroids with a known
+amount of spatial integration, parameter-sweep, density-subsampling and
+perturbation experiments, and plots of every metric across an integration sweep.
 
-Everything here is built on the primitives already in ``postprocess``:
-
-* generation   -- ``simulate_toy_centroids`` (symmetric integration model),
-                  wrapped here as ``simulate_pair_centroids`` (parametrised by a
+* generation   -- ``simulate_toy_centroids`` (symmetric integration model) and
+                  ``generate_integration_sweep`` (one draw per integration level),
+                  wrapped as ``simulate_pair_centroids`` (parametrised by a
                   TOTAL count + an me3/ac balance instead of two raw counts), plus
-                  a new ``simulate_one_sided_centroids`` (asymmetric: one channel
+                  ``simulate_one_sided_centroids`` (asymmetric: one channel
                   is placed independently, the other clusters onto it).
 * quantification -- every centroid metric in ``postprocess`` collapsed to a flat
                   dict of scalars by ``summarize_metrics`` so that one (me3, ac)
                   point set -> one DataFrame row.
+* plotting     -- ``plot_sncr_sweep``, ``plot_ripley_k_sweep``,
+                  ``plot_delaunay_sweep``, ``plot_mst_sweep``,
+                  ``plot_merge_curve_sweep``, ``plot_mesh_overlap_sweep``: one
+                  metric per figure, one curve / panel per integration level of a
+                  ``generate_integration_sweep`` result.
 
 Four experiment drivers, all returning tidy (long-form) DataFrames:
 
@@ -37,8 +43,10 @@ Four experiment drivers, all returning tidy (long-form) DataFrames:
 ``summarize_stability`` reduces any of those to per-group mean / std / CV.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.collections import LineCollection
 
 from . import postprocess as pp
 
@@ -72,10 +80,108 @@ METRIC_COLUMNS = [
 
 # --- generation -----------------------------------------------------------
 
+def simulate_toy_centroids(n_domains=150, integration_level=0.5, field_size_nm=10000.0,
+                            pair_jitter_nm=60.0, n_domains_ac=None, rng=None):
+    """
+    Two synthetic sets of nanodomain centroids (me3, ac) inside a square field,
+    with a single knob controlling how spatially "integrated" (co-localized)
+    the two channels are.
+
+    integration_level in [0, 1]:
+        0 -> me3 and ac centroids are two fully independent CSR (uniform
+             random) point processes -- no relationship between channels.
+        1 -> every centroid in the smaller-count channel is paired to one in
+             the other, offset by a small Gaussian jitter (pair_jitter_nm) --
+             the channels sit on top of each other as much as their relative
+             abundance allows.
+        0 < x < 1 -> that fraction of the smaller channel's domains are
+             paired; the rest are independent, unpaired CSR centroids in
+             each channel.
+
+    Args:
+        n_domains:        number of me3 domains
+        integration_level: fraction of domains that are spatially paired
+        field_size_nm:     side length of the square field (nm)
+        pair_jitter_nm:    stdev of the 2D offset between a paired me3/ac centroid
+        n_domains_ac:      number of ac domains; None (default) makes it equal
+                           to n_domains. Set this different from n_domains to
+                           test an abundance imbalance between channels --
+                           colocalization_fraction / cross_pair_correlation /
+                           self_nonself_contact_ratio's *_norm curves are
+                           designed to stay comparable across that imbalance,
+                           while the raw self_nonself_contact_ratio curves are
+                           NOT (see that function's docstring) -- this is the
+                           case that makes the raw-vs-normalized distinction
+                           actually visible, unlike the balanced default.
+        rng:               np.random.default_rng() instance; None makes a fresh one
+
+    Returns:
+        me3_df, ac_df: DataFrames [x [nm], y [nm], pair_id]
+            pair_id >= 0 links a paired me3/ac centroid across channels;
+            pair_id == -1 marks an independent (unpaired) centroid.
+    """
+    rng = rng or np.random.default_rng()
+    integration_level = float(np.clip(integration_level, 0.0, 1.0))
+    n_domains_ac = n_domains if n_domains_ac is None else n_domains_ac
+
+    n_paired = int(round(integration_level * min(n_domains, n_domains_ac)))
+    n_me3_indep = n_domains - n_paired
+    n_ac_indep = n_domains_ac - n_paired
+
+    parent_xy = rng.uniform(0, field_size_nm, size=(n_paired, 2))
+    me3_paired = parent_xy + rng.normal(0, pair_jitter_nm, size=(n_paired, 2))
+    ac_paired = parent_xy + rng.normal(0, pair_jitter_nm, size=(n_paired, 2))
+    pair_ids = np.arange(n_paired)
+
+    me3_indep = rng.uniform(0, field_size_nm, size=(n_me3_indep, 2))
+    ac_indep = rng.uniform(0, field_size_nm, size=(n_ac_indep, 2))
+
+    me3_xy = np.vstack([me3_paired, me3_indep])
+    ac_xy = np.vstack([ac_paired, ac_indep])
+    me3_pair_id = np.concatenate([pair_ids, np.full(n_me3_indep, -1)])
+    ac_pair_id = np.concatenate([pair_ids, np.full(n_ac_indep, -1)])
+
+    me3_df = pd.DataFrame(np.column_stack([me3_xy, me3_pair_id]), columns=["x [nm]", "y [nm]", "pair_id"])
+    ac_df = pd.DataFrame(np.column_stack([ac_xy, ac_pair_id]), columns=["x [nm]", "y [nm]", "pair_id"])
+    return me3_df, ac_df
+
+def generate_integration_sweep(integration_levels=(0.0, 0.25, 0.5, 0.75, 1.0), n_domains=150,
+                               n_domains_ac=None, field_size_nm=10000.0, pair_jitter_nm=60.0, rng=None):
+    """
+    Generates me3/ac toy centroids at each integration_level in one call, so
+    every downstream metric (colocalization_fraction, cross_pair_correlation,
+    self_nonself_contact_ratio, or a custom one) is computed on and plotted
+    against the SAME generated centroids instead of each caller re-simulating
+    its own draw. The balanced case (equal me3/ac counts) and the imbalanced
+    case (n_domains_ac != n_domains) both go through this one function --
+    just pass n_domains_ac to get the imbalanced distribution.
+
+    Args:
+        integration_levels: iterable of integration_level values to sweep
+        n_domains, n_domains_ac, field_size_nm, pair_jitter_nm: forwarded to
+            simulate_toy_centroids at each level (see its docstring)
+        rng: np.random.default_rng() instance, reused (not reset) across
+             levels so the whole sweep is reproducible from one seed while
+             each level still draws fresh points; None makes a fresh one
+
+    Returns:
+        list of dicts, one per level, each with keys:
+            'integration_level', 'me3_seeds', 'ac_seeds'
+    """
+    rng = rng or np.random.default_rng()
+    sweep = []
+    for level in integration_levels:
+        me3_seeds, ac_seeds = simulate_toy_centroids(
+            n_domains=n_domains, n_domains_ac=n_domains_ac, integration_level=level,
+            field_size_nm=field_size_nm, pair_jitter_nm=pair_jitter_nm, rng=rng)
+        sweep.append({"integration_level": level, "me3_seeds": me3_seeds, "ac_seeds": ac_seeds})
+    return sweep
+
+
 def simulate_pair_centroids(n_total=300, me3_fraction=0.5, integration_level=0.5,
                             field_size_nm=10000.0, pair_jitter_nm=60.0, rng=None):
     """
-    ``postprocess.simulate_toy_centroids`` re-parametrised by a TOTAL centroid
+    ``simulate_toy_centroids`` re-parametrised by a TOTAL centroid
     count and an me3/ac balance, so "number of localizations" and "balance" are
     two independent knobs rather than two raw per-channel counts.
 
@@ -101,7 +207,7 @@ def simulate_pair_centroids(n_total=300, me3_fraction=0.5, integration_level=0.5
     n_me3 = int(round(float(np.clip(me3_fraction, 0.0, 1.0)) * n_total))
     n_me3 = max(0, min(n_total, n_me3))
     n_ac = n_total - n_me3
-    return pp.simulate_toy_centroids(
+    return simulate_toy_centroids(
         n_domains=n_me3, n_domains_ac=n_ac, integration_level=integration_level,
         field_size_nm=field_size_nm, pair_jitter_nm=pair_jitter_nm, rng=rng)
 
@@ -341,6 +447,7 @@ DEFAULT_SWEEP_GRID = {
 
 
 def _params_to_centroids(params, rng):
+    """simulate_pair_centroids called with a BASELINE-style parameter dict."""
     return simulate_pair_centroids(
         n_total=params["n_total"], me3_fraction=params["me3_fraction"],
         integration_level=params["integration_level"],
@@ -363,6 +470,15 @@ def oat_parameter_sweep(baseline=None, grid=None, n_replicates=8, seed=0,
     across every panel so their scalars stay comparable; in the ``field_size_nm``
     panel the smallest fields therefore keep a smaller fraction of their points
     as border-safe references -- a mild, documented confound of that panel only.
+
+    Args:
+        baseline:        parameter dict with the ``BASELINE`` keys; None -> ``BASELINE``
+        grid:            {parameter: values to sweep}; None -> ``DEFAULT_SWEEP_GRID``
+        n_replicates:    independent realizations per grid point
+        seed:            seed of the single RNG used for the whole sweep
+        coloc_radius_nm, reference_radius_nm, r_max, dr, fr_permutations,
+        mesh_permutations: forwarded to ``summarize_metrics``
+        progress:        print a line as each parameter finishes
 
     Returns:
         tidy DataFrame, one row per (swept_param, swept_value, replicate), with
@@ -408,6 +524,15 @@ def one_sided_clustering_sweep(cluster_fractions=(0.0, 0.25, 0.5, 0.75, 1.0),
     ``oat_parameter_sweep`` on ``integration_level`` to see how each metric
     responds to symmetric vs asymmetric integration at the same nominal level.
 
+    Args:
+        cluster_fractions: follower fractions that cluster onto the anchor
+        followers:         which channel(s) follow: any of "me3", "ac"
+        n_replicates:      independent realizations per (follower, fraction)
+        seed:              seed of the single RNG used for the whole sweep
+        baseline:          parameter dict with the ``BASELINE`` keys; None -> ``BASELINE``
+        coloc_radius_nm, reference_radius_nm, r_max, dr, fr_permutations,
+        mesh_permutations: forwarded to ``summarize_metrics``
+
     Returns:
         tidy DataFrame, one row per (follower, cluster_fraction, replicate),
         with a ``follower`` column, ``cluster_fraction``, ``replicate``, the
@@ -450,6 +575,15 @@ def density_subsample_experiment(me3_df, ac_df, field_size_nm,
     across draws is pure sampling / estimator noise, and any drift of the
     per-fraction mean as the fraction falls is genuine density-dependence of the
     metric. ``fraction == 1.0`` is the full set and is evaluated once.
+
+    Args:
+        me3_df, ac_df:  the dense centroid sets (DataFrames or (N, 2) arrays)
+        field_size_nm:  square field side length (nm)
+        fractions:      retention fractions to thin both channels to
+        n_draws:        random subsets per fraction below 1.0
+        seed:           seed of the RNG used for subsampling and permutations
+        coloc_radius_nm, reference_radius_nm, r_max, dr, fr_permutations,
+        mesh_permutations: forwarded to ``summarize_metrics``
 
     Returns:
         tidy DataFrame, one row per (fraction, draw), columns: ``fraction``,
@@ -499,6 +633,16 @@ def perturbation_experiment(me3_df, ac_df, field_size_nm,
 
     Downstream: group by ``sigma_nm`` and read off mean / std / CV per metric
     (``summarize_stability``) to rank the metrics by robustness.
+
+    Args:
+        me3_df, ac_df:  the dataset to perturb (DataFrames or (N, 2) arrays)
+        field_size_nm:  square field side length (nm)
+        sigmas_nm:      Gaussian displacement stdevs (nm) to test
+        n_repeats:      perturbed copies per sigma
+        seed:           seed of the RNG used for jitter and permutations
+        clip_to_field:  clip displaced points back into [0, field_size_nm]
+        coloc_radius_nm, reference_radius_nm, r_max, dr, fr_permutations,
+        mesh_permutations: forwarded to ``summarize_metrics``
 
     Returns:
         tidy DataFrame, one row per (sigma_nm, repeat), columns: ``sigma_nm``,
@@ -559,3 +703,373 @@ def summarize_stability(df, group_cols, metric_cols=None):
         std = agg[f"{m}_std"]
         agg[f"{m}_cv"] = std / mean.abs().replace(0.0, np.nan)
     return agg.reset_index()
+
+
+# --- plotting: metric curves across an integration sweep ------------
+
+def plot_sncr_sweep(sweep, field_size_nm, r_max=800.0, dr=25.0, title=None):
+    """
+    Computes self_nonself_contact_ratio for every level in `sweep` (as returned
+    by generate_integration_sweep) and plots the raw and density-normalized
+    me3-centered/ac-centered curves in a 2x2 grid, one color per integration_level.
+
+    Args:
+        sweep:      list of dicts from generate_integration_sweep, each with
+                    'integration_level', 'me3_seeds', 'ac_seeds'
+        field_size_nm, r_max, dr: forwarded to self_nonself_contact_ratio
+        title:      figure suptitle; a sensible default is used if None
+
+    Returns:
+        (fig, axes): the created matplotlib Figure and 2x2 Axes array
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9), sharex=True)
+    cmap = plt.get_cmap("viridis")
+    me3_expected = ac_expected = None
+
+    for row in sweep:
+        level = row["integration_level"]
+        ratios = pp.self_nonself_contact_ratio(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            field_size_nm=field_size_nm, r_max=r_max, dr=dr)
+        me3_expected, ac_expected = ratios["me3_expected_ratio"], ratios["ac_expected_ratio"]
+
+        color = cmap(level)
+        axes[0, 0].plot(ratios["r"], ratios["me3_ratio_raw"], marker="o", markersize=3, color=color, label=f"level={level}")
+        axes[0, 1].plot(ratios["r"], ratios["ac_ratio_raw"], marker="o", markersize=3, color=color, label=f"level={level}")
+        axes[1, 0].plot(ratios["r"], ratios["me3_ratio_norm"], marker="o", markersize=3, color=color, label=f"level={level}")
+        axes[1, 1].plot(ratios["r"], ratios["ac_ratio_norm"], marker="o", markersize=3, color=color, label=f"level={level}")
+
+    axes[0, 0].axhline(me3_expected, color="gray", linestyle="--", label=f"CSR (chance, raw={me3_expected:.2f})")
+    axes[0, 1].axhline(ac_expected, color="gray", linestyle="--", label=f"CSR (chance, raw={ac_expected:.2f})")
+    axes[1, 0].axhline(1.0, color="gray", linestyle="--", label="CSR (chance)")
+    axes[1, 1].axhline(1.0, color="gray", linestyle="--", label="CSR (chance)")
+
+    axes[0, 0].set_title("me3-centered (raw)")
+    axes[0, 1].set_title("ac-centered (raw)")
+    axes[1, 0].set_title("me3-centered (normalized)")
+    axes[1, 1].set_title("ac-centered (normalized)")
+
+    axes[0, 0].set_ylabel("self/nonself count ratio")
+    axes[1, 0].set_ylabel("normalized self/nonself ratio")
+    for ax in axes[1, :]:
+        ax.set_xlabel("r (nm)")
+    for ax in axes.ravel():
+        ax.legend(fontsize=7)
+
+    plt.suptitle(title or "Self-nonself contact ratio")
+    plt.tight_layout()
+    plt.show()
+    return fig, axes
+
+def plot_ripley_k_sweep(sweep, field_size_nm, r_max=800.0, dr=25.0, title=None):
+    """
+    Computes ripleys_k_cross for every level in `sweep` (as returned by
+    generate_integration_sweep) and plots the detrended L_ab(r) - r /
+    L_ba(r) - r curves, one color per integration_level.
+
+    Args:
+        sweep:      list of dicts from generate_integration_sweep, each with
+                    'integration_level', 'me3_seeds', 'ac_seeds'
+        field_size_nm, r_max, dr: forwarded to ripleys_k_cross
+        title:      figure suptitle; a sensible default is used if None
+
+    Returns:
+        (fig, axes): the created matplotlib Figure and 1x2 Axes array
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+    cmap = plt.get_cmap("viridis")
+
+    for row in sweep:
+        level = row["integration_level"]
+        k = pp.ripleys_k_cross(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            field_size_nm=field_size_nm, r_max=r_max, dr=dr)
+
+        color = cmap(level)
+        axes[0].plot(k["r"], k["L_ab"] - k["r"], marker="o", markersize=3, color=color, label=f"level={level}")
+        axes[1].plot(k["r"], k["L_ba"] - k["r"], marker="o", markersize=3, color=color, label=f"level={level}")
+
+    axes[0].axhline(0.0, color="gray", linestyle="--", label="CSR (no association)")
+    axes[1].axhline(0.0, color="gray", linestyle="--", label="CSR (no association)")
+
+    axes[0].set_title("me3-centered")
+    axes[1].set_title("ac-centered")
+    axes[0].set_ylabel("L(r) - r (nm)")
+    for ax in axes:
+        ax.set_xlabel("r (nm)")
+        ax.legend(fontsize=7)
+
+    plt.suptitle(title or "Ripley's K/L")
+    plt.tight_layout()
+    plt.show()
+    return fig, axes
+
+def _draw_graph(ax, points, edges, labels, heterotypic_color="darkorange", homotypic_color="lightgray",
+                heterotypic_width=1.2, homotypic_width=0.6):
+    """
+    Draws a point+edge graph (Delaunay triangulation or MST) on `ax`: nodes
+    colored by channel (green=me3, red=ac), edges colored by whether they
+    connect the same channel (homotypic, faint gray) or different channels
+    (heterotypic, highlighted). Shared by plot_delaunay_sweep and
+    plot_mst_sweep since both draw the same kind of point+edge graph.
+    """
+    heterotypic = labels[edges[:, 0]] != labels[edges[:, 1]]
+    segments = points[edges]  # (E, 2, 2): E edges, 2 endpoints, [x, y] each
+
+    ax.add_collection(LineCollection(segments[~heterotypic], colors=homotypic_color,
+                                     linewidths=homotypic_width, zorder=1))
+    ax.add_collection(LineCollection(segments[heterotypic], colors=heterotypic_color,
+                                     linewidths=heterotypic_width, zorder=2))
+    ax.scatter(points[labels == 0, 0], points[labels == 0, 1], s=15, color="green", zorder=3, label="me3")
+    ax.scatter(points[labels == 1, 0], points[labels == 1, 1], s=15, color="red", zorder=3, label="ac")
+    ax.set_aspect("equal")
+
+def plot_delaunay_sweep(sweep, title=None):
+    """
+    For every level in `sweep` (from generate_integration_sweep), draws the
+    Delaunay triangulation over the pooled me3+ac centroids side by side
+    across integration_level (heterotypic edges highlighted, homotypic edges
+    faint), then plots heterotypic_fraction (raw) and assortativity
+    (chance-corrected) vs. integration_level underneath -- see
+    delaunay_channel_mixing for what each measures.
+
+    Args:
+        sweep: list of dicts from generate_integration_sweep
+        title: suptitle for the graph row; a sensible default is used if None
+
+    Returns:
+        list of dicts from delaunay_channel_mixing, one per level (sweep order)
+    """
+    results = [
+        pp.delaunay_channel_mixing(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy())
+        for row in sweep
+    ]
+
+    fig, axes = plt.subplots(1, len(sweep), figsize=(4 * len(sweep), 4), sharey=True)
+    axes = np.atleast_1d(axes)
+    for row, result, ax in zip(sweep, results, axes):
+        _draw_graph(ax, result["points"], result["edges"], result["labels"])
+        ax.set_title(f"level={row['integration_level']}\nheterotypic={result['heterotypic_fraction']:.2f}")
+
+    axes[0].legend(loc="upper right", fontsize=9)
+    plt.suptitle(title or "Delaunay triangulation, channel mixing")
+    plt.tight_layout()
+    plt.show()
+
+    levels = [row["integration_level"] for row in sweep]
+    fig, axes2 = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    axes2[0].plot(levels, [r["heterotypic_fraction"] for r in results], "o-", color="darkorange")
+    axes2[0].set_title("heterotypic edge fraction (raw)")
+    axes2[0].set_xlabel("integration_level")
+    axes2[0].set_ylim(-0.05, 1.05)
+
+    axes2[1].plot(levels, [r["assortativity"] for r in results], "o-", color="steelblue")
+    axes2[1].axhline(0.0, color="gray", linestyle="--", label="no mixing preference")
+    axes2[1].set_title("assortativity (chance-corrected)")
+    axes2[1].set_xlabel("integration_level")
+    axes2[1].set_ylim(-1.05, 1.05)
+    axes2[1].legend(fontsize=8)
+
+    plt.tight_layout()
+    plt.show()
+    return results
+
+def plot_mst_sweep(sweep, n_permutations=500, rng=None, title=None):
+    """
+    For every level in `sweep` (from generate_integration_sweep), draws the
+    minimum spanning tree over the pooled me3+ac centroids side by side
+    across integration_level (cross-type edges highlighted), then plots the
+    Friedman-Rafsky cross-edge fraction (observed vs. permutation null) and
+    z-score vs. integration_level underneath -- see friedman_rafsky_test for
+    what each measures.
+
+    Args:
+        sweep:          list of dicts from generate_integration_sweep
+        n_permutations: forwarded to friedman_rafsky_test
+        rng:            np.random.default_rng() instance, reused across
+                        levels; None makes a fresh one
+        title:          suptitle for the tree row; a sensible default is
+                        used if None
+
+    Returns:
+        list of dicts from friedman_rafsky_test, one per level (sweep order)
+    """
+    rng = rng or np.random.default_rng()
+    results = [
+        pp.friedman_rafsky_test(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            n_permutations=n_permutations, rng=rng)
+        for row in sweep
+    ]
+
+    fig, axes = plt.subplots(1, len(sweep), figsize=(4 * len(sweep), 4), sharey=True)
+    axes = np.atleast_1d(axes)
+    for row, result, ax in zip(sweep, results, axes):
+        _draw_graph(ax, result["points"], result["edges"], result["labels"],
+                    heterotypic_width=1.5, homotypic_width=0.8)
+        ax.set_title(f"level={row['integration_level']}\nz={result['z_score']:.1f}")
+
+    axes[0].legend(loc="upper right", fontsize=9)
+    plt.suptitle(title or "Minimum spanning tree, channel mixing")
+    plt.tight_layout()
+    plt.show()
+
+    levels = [row["integration_level"] for row in sweep]
+    fig, axes2 = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    axes2[0].plot(levels, [r["observed_fraction"] for r in results], "o-", color="darkorange", label="observed")
+    axes2[0].plot(levels, [r["null_mean_fraction"] for r in results], "o--", color="gray", label="permutation null")
+    axes2[0].set_title("cross-type edge fraction")
+    axes2[0].set_xlabel("integration_level")
+    axes2[0].set_ylim(-0.05, 1.05)
+    axes2[0].legend(fontsize=8)
+
+    axes2[1].plot(levels, [r["z_score"] for r in results], "o-", color="steelblue")
+    axes2[1].axhline(0.0, color="gray", linestyle="--")
+    axes2[1].axhline(1.96, color="gray", linestyle=":", linewidth=1, label="|z| = 1.96")
+    axes2[1].axhline(-1.96, color="gray", linestyle=":", linewidth=1)
+    axes2[1].set_title("Friedman-Rafsky z-score")
+    axes2[1].set_xlabel("integration_level")
+    axes2[1].legend(fontsize=8)
+
+    plt.tight_layout()
+    plt.show()
+    return results
+
+def plot_merge_curve_sweep(sweep, r_max=800.0, title=None):
+    """
+    Computes mst_merge_curve for every level in `sweep` (from
+    generate_integration_sweep) and plots the cumulative heterotypic-merge
+    fraction vs. merge radius, one color per integration_level -- how EARLY
+    (at what length scale) cross-channel merging starts dominating, as a
+    complement to plot_mst_sweep's single aggregate number per level.
+
+    Args:
+        sweep: list of dicts from generate_integration_sweep
+        r_max: forwarded to mst_merge_curve
+        title: figure title; a sensible default is used if None
+
+    Returns:
+        list of dicts from mst_merge_curve, one per level (sweep order)
+    """
+    results = []
+    fig, ax = plt.subplots(figsize=(7, 5))
+    cmap = plt.get_cmap("viridis")
+    chance = None
+
+    for row in sweep:
+        level = row["integration_level"]
+        curve = pp.mst_merge_curve(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            r_max=r_max)
+        results.append(curve)
+        chance = curve["chance_fraction"]
+
+        ax.plot(curve["radius"], curve["cum_heterotypic_frac"], color=cmap(level), label=f"level={level}")
+
+    ax.axhline(chance, color="gray", linestyle="--", label=f"chance ({chance:.2f})")
+    ax.set_xlabel("merge radius (nm)")
+    ax.set_ylabel("cumulative heterotypic-merge fraction")
+    ax.set_ylim(-0.05, 1.05)
+    ax.legend(fontsize=8)
+    ax.set_title(title or "MST merge curve (H0 persistence)")
+    plt.tight_layout()
+    plt.show()
+    return results
+
+def plot_mesh_overlap_sweep(sweep, n_permutations=100, rng=None, title=None):
+    """
+    For every level in `sweep` (from generate_integration_sweep), draws the
+    SEPARATE me3 and ac Delaunay meshes overlaid (me3 edges green, ac edges
+    red, actual crossing points marked with an orange x) side by side across
+    integration_level, then plots the crossing fraction (raw, both
+    directions) and -- if n_permutations > 0 -- the permutation z-score vs.
+    integration_level underneath. See mesh_overlap for what each measures.
+
+    Args:
+        sweep:          list of dicts from generate_integration_sweep
+        n_permutations: forwarded to mesh_overlap; each permutation rebuilds
+                        BOTH triangulations from scratch, so this is pricier
+                        per-call than friedman_rafsky_test's permutations --
+                        kept modest by default. 0 skips the null entirely
+                        (crossing counts/fractions only, no z-score panel)
+        rng:            np.random.default_rng() instance, reused across
+                        levels; None makes a fresh one
+        title:          suptitle for the mesh row; a sensible default is
+                        used if None
+
+    Returns:
+        list of dicts from mesh_overlap, one per level (sweep order)
+    """
+    rng = rng or np.random.default_rng()
+    results = [
+        pp.mesh_overlap(
+            row["me3_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            row["ac_seeds"][["x [nm]", "y [nm]"]].to_numpy(),
+            n_permutations=n_permutations, rng=rng)
+        for row in sweep
+    ]
+    has_null = "z_score" in results[0]
+
+    fig, axes = plt.subplots(1, len(sweep), figsize=(4 * len(sweep), 4), sharey=True)
+    axes = np.atleast_1d(axes)
+    for row, result, ax in zip(sweep, results, axes):
+        me3_pts, ac_pts = result["me3_points"], result["ac_points"]
+        me3_segs = me3_pts[result["me3_edges"]]
+        ac_segs = ac_pts[result["ac_edges"]]
+
+        ax.add_collection(LineCollection(me3_segs, colors="green", linewidths=0.7, alpha=0.6, zorder=1))
+        ax.add_collection(LineCollection(ac_segs, colors="red", linewidths=0.7, alpha=0.6, zorder=1))
+        ax.scatter(me3_pts[:, 0], me3_pts[:, 1], s=12, color="green", zorder=3, label="me3")
+        ax.scatter(ac_pts[:, 0], ac_pts[:, 1], s=12, color="red", zorder=3, label="ac")
+        if len(result["crossing_points"]) > 0:
+            ax.scatter(result["crossing_points"][:, 0], result["crossing_points"][:, 1],
+                      s=4, color="darkorange", marker="x", linewidths=0.7, zorder=4, label="crossing")
+
+        z_label = f"  z={result['z_score']:.1f}" if has_null else ""
+        ax.set_title(f"level={row['integration_level']}\ncrossings={result['n_crossings']}{z_label}")
+        ax.set_aspect("equal")
+
+    mesh_title = title or "Delaunay mesh overlap, me3 vs. ac"
+    axes[0].legend(loc="upper right", fontsize=8)
+    plt.suptitle(mesh_title)
+    plt.tight_layout()
+    plt.show()
+
+    levels = [row["integration_level"] for row in sweep]
+    fig, axes2 = plt.subplots(1, 3 if has_null else 1, figsize=(5.5 * (3 if has_null else 1), 4.5))
+    axes2 = np.atleast_1d(axes2)
+
+    axes2[0].plot(levels, [r["me3_crossing_fraction"] for r in results], "o-", color="green", label="me3 edges")
+    axes2[0].plot(levels, [r["ac_crossing_fraction"] for r in results], "o-", color="red", label="ac edges")
+    axes2[0].set_title("fraction of edges crossing the other mesh")
+    axes2[0].set_xlabel("integration_level")
+    axes2[0].set_ylim(-0.05, 1.05)
+    axes2[0].legend(fontsize=8)
+
+    if has_null:
+        axes2[1].plot(levels, [r["n_crossings"] for r in results], "o-", color="darkorange", label="observed")
+        axes2[1].plot(levels, [r["null_mean_crossings"] for r in results], "o--", color="gray", label="permutation null")
+        axes2[1].set_title("total edge crossings")
+        axes2[1].set_xlabel("integration_level")
+        axes2[1].legend(fontsize=8)
+
+        axes2[2].plot(levels, [r["z_score"] for r in results], "o-", color="steelblue")
+        axes2[2].axhline(0.0, color="gray", linestyle="--")
+        axes2[2].axhline(1.96, color="gray", linestyle=":", linewidth=1, label="|z| = 1.96")
+        axes2[2].axhline(-1.96, color="gray", linestyle=":", linewidth=1)
+        axes2[2].set_title("mesh-overlap z-score")
+        axes2[2].set_xlabel("integration_level")
+        axes2[2].legend(fontsize=8)
+
+    plt.suptitle(f"{mesh_title} -- crossing statistics")
+    plt.tight_layout()
+    plt.show()
+    return results

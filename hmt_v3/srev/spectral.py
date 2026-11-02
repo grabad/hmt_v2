@@ -216,13 +216,33 @@ class SpectralConfig:
 
 
 def wavelength_to_offset_px(wavelength_nm, config):
-    """x offset (px) of `wavelength_nm` in the spectral image, relative to the emitter's zeroth-order x. Vectorized."""
+    """
+    x offset (px) of `wavelength_nm` in the spectral image, relative to the
+    emitter's zeroth-order x. Vectorized.
+
+    Args:
+        wavelength_nm: scalar or array of wavelengths (nm)
+        config:        SpectralConfig (dispersion and reference wavelength)
+
+    Returns:
+        float array of offsets (px), shaped like wavelength_nm
+    """
     lam = np.asarray(wavelength_nm, dtype=float)
     return config.reference_offset_px + (lam - config.reference_wavelength_nm) / config.dispersion_nm_per_px
 
 
 def offset_px_to_wavelength(offset_px, config):
-    """Inverse of wavelength_to_offset_px -- what a spectral-image column at that offset means in nm. Vectorized."""
+    """
+    Inverse of wavelength_to_offset_px -- what a spectral-image column at
+    that offset means in nm. Vectorized.
+
+    Args:
+        offset_px: scalar or array of x offsets (px) from the zeroth-order x
+        config:    SpectralConfig
+
+    Returns:
+        float array of wavelengths (nm), shaped like offset_px
+    """
     off = np.asarray(offset_px, dtype=float)
     return config.reference_wavelength_nm + (off - config.reference_offset_px) * config.dispersion_nm_per_px
 
@@ -254,6 +274,13 @@ def emission_centroid_nm(dye, config):
     RainbowSTORM analysis integrating that same window should recover for
     an unshifted molecule of this dye (before the emitter's own
     heterogeneity shift, which adds to it).
+
+    Args:
+        dye:    DyeSpectrum
+        config: SpectralConfig (its wavelength_window_nm is integrated over)
+
+    Returns:
+        float: centroid wavelength (nm)
     """
     lam, dens = sample_emission(dye, config)
     return float((lam * dens).sum() / dens.sum())
@@ -294,7 +321,16 @@ def dispersed_kernel(dye, config):
 
 
 def build_kernels(dyes, config):
-    """{dye.name: dispersed_kernel(dye, config)} for every dye in `dyes`."""
+    """
+    Dispersed spectral kernels for several dyes at once.
+
+    Args:
+        dyes:   iterable of DyeSpectrum
+        config: SpectralConfig
+
+    Returns:
+        dict {dye.name: (offsets, weights)} from dispersed_kernel
+    """
     return {dye.name: dispersed_kernel(dye, config) for dye in dyes}
 
 
@@ -305,6 +341,13 @@ def kernel_extent_px(kernels, config):
     including reference_offset_px. Used to size a frame that fits the
     spectra (fit_frame_to_spatial_and_spectral) and to define the column
     window measure_spectral_centroids integrates over.
+
+    Args:
+        kernels: dict from build_kernels
+        config:  SpectralConfig
+
+    Returns:
+        (lo, hi): smallest and largest reachable offset (px)
     """
     lo = min(int(off[0]) for off, _ in kernels.values()) + config.reference_offset_px
     hi = max(int(off[-1]) for off, _ in kernels.values()) + config.reference_offset_px
@@ -312,7 +355,17 @@ def kernel_extent_px(kernels, config):
 
 
 def first_order_sigma_nm(z_nm, config):
-    """First-order PSF sigma (nm) at each z, per SpectralConfig's symmetric defocus curve. Vectorized."""
+    """
+    First-order (spectral) PSF width at each z, per SpectralConfig's
+    symmetric defocus curve. Vectorized.
+
+    Args:
+        z_nm:   scalar or array of emitter z (nm)
+        config: SpectralConfig
+
+    Returns:
+        float array of sigma (nm), shaped like z_nm
+    """
     u = (np.asarray(z_nm, dtype=float) - config.psf_focal_offset_nm) / config.psf_depth_scale_nm
     return config.psf_sigma0_nm * np.sqrt(1.0 + u**2)
 
@@ -328,6 +381,14 @@ def fit_frame_to_spatial_and_spectral(x_nm, y_nm, kernels, camera_config, spectr
     (make_real_fist's output was cropped to the zeroth-order size) and a
     split-camera acquisition; the spatial stack simply has empty
     background where the other stack carries spectra.
+
+    Args:
+        x_nm, y_nm:      emitter zeroth-order positions (nm)
+        kernels:         dict from build_kernels
+        camera_config:   render.CameraConfig (pixel size)
+        spectral_config: SpectralConfig
+        render_config:   render.RenderConfig (PSF window size)
+        margin_nm:       extra border around everything (nm)
 
     Returns:
         (frame_shape, x_offset_nm, y_offset_nm) exactly as

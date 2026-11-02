@@ -15,7 +15,7 @@ Two entry points:
 
 run_pipeline -- ONE emission channel per call, matching
 export_to_thunderstorm's own documented convention of running once per
-mark/channel (hmt_v3/simulate.py): one compartment_filter, one dye, one
+mark/channel (hmt_v3/export.py): one compartment_filter, one dye, one
 conventional (zeroth-order only) `stack.tif`. Two such calls give two
 separate movies that never interact.
 

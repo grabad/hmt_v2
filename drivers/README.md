@@ -5,6 +5,9 @@ post-translational histone modifications using sSMLM") end to end on real data,
 using the `hmt_v3` library. Set paths and parameters in `config.py`; the step
 scripts don't need editing.
 
+[pipeline_flow.html](../pipeline_flow.html) in the repo root is an interactive
+flowchart of every calculation in steps 01–05; open it in a browser.
+
 ## Input
 `DATA_DIR` holds RainbowSTORM exports already split by spectral classification:
 `<cell_id>_me3.csv` and `<cell_id>_ac.csv` (columns `x [nm]`, `y [nm]`, `z [nm]`).
@@ -26,6 +29,16 @@ python drivers/run_all.py             # full run
 python drivers/03_cluster.py --cells k27_k27_thaw009 --overwrite   # redo one cell
 ```
 Every step skips cells whose outputs already exist unless you pass `--overwrite`.
+
+Before step 02, choose `DOMAIN_SCALE_NM` (the simulated domains' cutoff radius) with
+`sweep_domain_scale.py`. For each candidate scale it rebuilds the calibration cell's simulated nucleus
+and reports how many ground-truth domains overlap their neighbour and how well DBSCAN recovers them.
+It then suggests a scale per mark (a few minutes per scale and mark):
+
+```
+python drivers/sweep_domain_scale.py                                  # default scales, both marks
+python drivers/sweep_domain_scale.py --channels me3 --scales 80 120 160
+```
 Step 02 is slow. Its cost is roughly (#density fractions x #min_samples x ~30
 DBSCAN runs) per mark per calibration.
 

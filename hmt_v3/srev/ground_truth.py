@@ -58,7 +58,8 @@ def save_run(output_dir, monomers_df, primaries_df, secondaries_df, fluorophores
 
     Args:
         output_dir:                       directory to write into (created if missing)
-        monomers_df ... blink_events_df:  the five core tables
+        monomers_df, primaries_df, secondaries_df, fluorophores_df,
+        blink_events_df:                  the five core tables
         config:          the run's config object (e.g. a nested
                          SrEvSimConfig dataclass) -- serialized recursively
                          via dataclasses.asdict if it is a dataclass,
@@ -134,6 +135,10 @@ def check_referential_integrity(monomers_df, primaries_df, secondaries_df,
     resolves to a real parent row. Raises with the specific orphan count
     on the first violated relationship, rather than passing silently or
     only reporting the first bad row.
+
+    Args:
+        monomers_df, primaries_df, secondaries_df, fluorophores_df,
+        blink_events_df: the five core tables of one run (see save_run)
 
     Returns:
         True (never False -- a failed check raises AssertionError)
